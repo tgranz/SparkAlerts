@@ -1,6 +1,7 @@
 # SparkAlerts
-### XMPP Processor with built-in API to easily access the NWWS-OI.
+### XMPP Processor with built-in API to easily access the NWWS-OI. (WIP)
 Used in [Spark Radar](https://sparkradar.app).
+
 
 <a href="https://www.buymeacoffee.com/nimbusapps"><img src="https://img.shields.io/badge/Buy_Me_A_Coffee-FFDD00?style=for-the-badge&logo=buy-me-a-coffee&logoColor=black"></a>
 
