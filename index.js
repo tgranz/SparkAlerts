@@ -38,17 +38,17 @@ require('dotenv').config();
 
 // Run a check to ensure the required environment variables are set
 if (!fs.existsSync('.env')) {
-    console.error('No .env file found. Check https://github.com/tgranz/SparkAlerts?tab=readme-ov-file#Environment%20Setup for details.');
+    console.error('No .env file found. Check https://github.com/tgranz/SparkAlerts?tab=readme-ov-file#environment%20setup for details.');
     process.exit(1);
 }
 if (!process.env.XMPP_USERNAME) {
-    console.error('.env file is missing XMPP_USERNAME variable. Check https://github.com/tgranz/SparkAlerts?tab=readme-ov-file#Environment%20Setup for details.');
+    console.error('.env file is missing XMPP_USERNAME variable. Check https://github.com/tgranz/SparkAlerts?tab=readme-ov-file#environment%20setup for details.');
     process.exit(1);
 } else if (!process.env.XMPP_PASSWORD) {
-    console.error('.env file is missing XMPP_PASSWORD variable. Check https://github.com/tgranz/SparkAlerts?tab=readme-ov-file#Environment%20Setup for details.');
+    console.error('.env file is missing XMPP_PASSWORD variable. Check https://github.com/tgranz/SparkAlerts?tab=readme-ov-file#environment%20setup for details.');
     process.exit(1);
 } else if (!process.env.ALLOW_NO_ORIGIN) {
-    console.error('.env file is missing XMPP_PASSWORD variable. Check https://github.com/tgranz/SparkAlerts?tab=readme-ov-file#Environment%20Setup for details.');
+    console.error('.env file is missing XMPP_PASSWORD variable. Check https://github.com/tgranz/SparkAlerts?tab=readme-ov-file#environment%20setup for details.');
     process.exit(1);
 }
 

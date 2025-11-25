@@ -25,7 +25,7 @@ Built for and used in [Spark Radar](https://sparkradar.app).
 ## Run
 You will need an NWWS-OI account, which can be requested [here](https://www.weather.gov/nwws/nwws_oi_request). To learn more about the NWWS, see [here](https://www.weather.gov/nwws/).
 
-- [Setup .env file](https://github.com/tgranz/SparkAlerts?tab=readme-ov-file#Environment%20Setup).
+- [Setup .env file](https://github.com/tgranz/SparkAlerts?tab=readme-ov-file#environment%20setup).
 
 - Install the necessary packages with `npm install`
 
