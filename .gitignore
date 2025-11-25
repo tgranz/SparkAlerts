@@ -1,3 +1,5 @@
 SparkAlerts.code-workspace
 .vscode/
 .env
+node_modules/
+service.log

@@ -22,84 +22,144 @@ varITUTES CONSENT to these terms.
 
 */
 
-// Access token for the API
-// Load local .env if available (optional dependency)
-try { require('dotenv').config(); } catch (e) { /* dotenv not installed; environment variables should be provided by the host */ }
 
-// Access token for the API (prefer environment variable)
-const VALID_ACCESS_TOKEN = process.env.VALID_ACCESS_TOKEN || 'p8GrcfYxhlfH3iFkpCXWgIVePrOnus2w';
-
+// Imports
 var { match } = require('assert');
 var { json } = require('stream/consumers');
 const fs = require('node:fs');
 const { log } = require('node:console');
 const express = require('express');
 const rateLimit = require('express-rate-limit');
+const { ipKeyGenerator } = require('express-rate-limit');
 const cors = require('cors');
 const crypto = require('crypto');
 
+require('dotenv').config();
+
+// Run a check to ensure the required environment variables are set
+if (!fs.existsSync('.env')) {
+    console.error('No .env file found. Check https://github.com/tgranz/SparkAlerts?tab=readme-ov-file#Environment%20Setup for details.');
+    process.exit(1);
+}
+if (!process.env.XMPP_USERNAME) {
+    console.error('.env file is missing XMPP_USERNAME variable. Check https://github.com/tgranz/SparkAlerts?tab=readme-ov-file#Environment%20Setup for details.');
+    process.exit(1);
+} else if (!process.env.XMPP_PASSWORD) {
+    console.error('.env file is missing XMPP_PASSWORD variable. Check https://github.com/tgranz/SparkAlerts?tab=readme-ov-file#Environment%20Setup for details.');
+    process.exit(1);
+} else if (!process.env.ALLOW_NO_ORIGIN) {
+    console.error('.env file is missing XMPP_PASSWORD variable. Check https://github.com/tgranz/SparkAlerts?tab=readme-ov-file#Environment%20Setup for details.');
+    process.exit(1);
+}
+
+
+
+
+
+
+// ================================================================
+// Express webserver API configuration
+// ================================================================
+
+// Set up the express webserver
 const app = express();
 const port = 8433;
 
-// API Keys configuration with rate limits and metadata
-// You can provide API keys as a JSON string in the environment variable `API_KEYS_JSON`.
-// Example:
-// API_KEYS_JSON='{"your_api_key_here":{"name":"Prod Key","rateLimit":100}}'
-let API_KEYS = {};
-if (process.env.API_KEYS_JSON) {
-    try {
-        API_KEYS = JSON.parse(process.env.API_KEYS_JSON);
-    } catch (e) {
-        console.warn('Failed to parse API_KEYS_JSON, falling back to default. Error:', e.message);
-        API_KEYS = {};
-    }
-}
+// API keys configuration
+/*format:
 
-// Fallback to the single development token if nothing provided
-if (!API_KEYS || Object.keys(API_KEYS).length === 0) {
-    API_KEYS = {
-        [VALID_ACCESS_TOKEN]: {
+aaa: {
             name: 'Development API Key',
             rateLimit: 100, // requests per window
             whitelist: [], // allowed IPs/domains
             lastUsed: null,
             active: true
         }
-    };
+
+*/
+let API_KEYS = {};
+if (process.env.API_KEYS_JSON) {
+    try {
+        API_KEYS = JSON.parse(process.env.API_KEYS_JSON);
+    } catch (e) {
+        console.warn('API_KEYS contains invalid JSON! Error:', e.message);
+    }
+} else if (!process.env.ALLOW_NO_ORIGIN && process.env.DOMAIN_WHITELIST == null) {
+    console.error('You have no API keys, no whitelisted domains, and do not allow no-origin requests. You cannot access the API!');
 }
 
-// Generate HMAC signature for request verification
+
+// Function to generate HMAC signature for request verification
 function generateSignature(apiKey, timestamp, method, path) {
     const hmac = crypto.createHmac('sha256', apiKey);
     const data = `${timestamp}${method}${path}`;
     return hmac.update(data).digest('hex');
 }
 
+
+// Function to log messages asynchronously
+function nosyncLog(message) {
+    // Convert to EST and format date
+    const date = new Date();
+    const estDate = new Date(date.toLocaleString('en-US', { timeZone: 'America/New_York' }));
+    const formattedDate = estDate.toLocaleString('en-US', {
+        day: '2-digit',
+        month: '2-digit',
+        hour: '2-digit',
+        minute: '2-digit',
+        second: '2-digit',
+        hour12: false
+    });
+
+    const logMessage = `[${formattedDate} EST] ${message}\n`;
+
+    // Read existing logs
+    try {
+        const existingLogs = fs.existsSync('service.log')
+            ? fs.readFileSync('service.log', 'utf8')
+            : '';
+
+        // Split logs into lines and keep only the latest 9999 lines
+        let logLines = existingLogs.split('\n');
+        if (logLines.length > 9999) {
+            logLines = logLines.slice(0, 9999);
+        }
+
+        // Prepend new message and join lines back together
+        fs.writeFileSync('service.log', logMessage + logLines.join('\n'));
+    } catch (err) {
+        console.error('Error writing to log file:', err);
+        console.log('Original message:', message);
+    }
+}
+
+
 // CORS configuration
 const corsOptions = {
     origin: function (origin, callback) {
-        // Allow requests with no origin (like mobile apps, curl, etc)
-        if (!origin) return callback(null, true);
         
-        // Always allow sparkradar.app and its subdomains
-        if (origin.includes('sparkradar.app')) {
-            return callback(null, true);
-        }
+        if (process.env.ALLOW_NO_ORIGIN) { if (!origin) return callback(null, true); }
+        
+        // Allow requests from whitelisted origins
+        process.env.DOMAIN_WHITELIST.split(',').forEach((domain) => {
+            domain = domain.trim();
+            if (origin.includes(domain)) {
+                return callback(null, true);
+            }
+        });
         
         // For other origins, we'll validate their API key and signature in the request handler
         callback(null, true);
     },
+
     methods: ['GET', 'POST', 'OPTIONS'],
     allowedHeaders: ['Content-Type', 'Authorization'],
     credentials: true,
     optionsSuccessStatus: 204
 };
 
-// Setup middleware in correct order
-app.use(cors(corsOptions));
-app.use(express.json());
 
-// Custom rate limiter based on API key and IP
+// Rate limiter based on API key and/or IP
 const apiRateLimiter = rateLimit({
     windowMs: 15 * 60, // 15 seconds
     max: (req) => {
@@ -108,13 +168,14 @@ const apiRateLimiter = rateLimit({
     },
     keyGenerator: (req) => {
         const apiKey = req.get('Authorization')?.split(' ')[1] || '';
-        return `${apiKey}_${req.ip}`;
+        return `${apiKey}_${ipKeyGenerator(req)}`;
     },
     message: { 
         status: "ERROR", 
         message: "Rate limit exceeded. Please slow down your requests." 
     }
 });
+
 
 // Combined origin and token check middleware
 const validateRequest = (req, res, next) => {
@@ -123,18 +184,21 @@ const validateRequest = (req, res, next) => {
     const timestamp = req.get('X-Request-Time');
     const signature = req.get('X-Signature');
     
-    // Allow requests from sparkradar.app or its subdomains without additional auth
-    if (origin && new URL(origin).hostname.endsWith('sparkradar.app')) {
-        nosyncLog(`Authorized access from sparkradar.app domain: ${origin}`);
-        return next();
-    }
+    // Allow requests from whitelisted domains
+    process.env.DOMAIN_WHITELIST.split(',').forEach((domain) => {
+        domain = domain.trim();
+        if (origin.includes(domain)) {
+            nosyncLog(`Authorized access from whitelisted domain: ${origin}`);
+            return next();
+        }
+    });
 
-    // For non-sparkradar.app origins, require proper authentication
+    // For non-whitelisted origins, require api key
     if (!authHeader || !authHeader.startsWith('Bearer ')) {
         nosyncLog(`Missing or invalid Authorization header from: ${origin}`);
         return res.status(401).json({
             status: "ERROR",
-            message: "Missing or invalid Authorization header"
+            message: "Missing or invalid 'Authorization' header"
         });
     }
 
@@ -177,63 +241,32 @@ const validateRequest = (req, res, next) => {
     next();
 };
 
-// Apply middleware in correct order
+
+// Apply middleware
 app.use(express.json());
 app.use(cors(corsOptions));
-app.use(apiRateLimiter);  // Apply rate limiting
-app.use(validateRequest);  // Apply request validation
+app.use(apiRateLimiter)
+app.use(validateRequest);
 
-// Log all requests
+
+/* Log all requests
 app.use((req, res, next) => {
     nosyncLog(`${req.method} ${req.path} from ${req.get('origin') || 'Unknown Origin'}`);
     next();
+});*/
+
+
+// Ping endpoint - for uptime monitoring
+app.get('/ping', (req, res, next) => {
+    res.status(200).send({ status: "OK" });
 });
 
-function nosyncLog(message) {
-    // Convert to EST and format date
-    const date = new Date();
-    const estDate = new Date(date.toLocaleString('en-US', { timeZone: 'America/New_York' }));
-    const formattedDate = estDate.toLocaleString('en-US', {
-        day: '2-digit',
-        month: '2-digit',
-        hour: '2-digit',
-        minute: '2-digit',
-        second: '2-digit',
-        hour12: false
-    });
-
-    const logMessage = `[${formattedDate} EST] ${message}\n`;
-
-    // Read existing logs
-    try {
-        const existingLogs = fs.existsSync('service.log') 
-            ? fs.readFileSync('service.log', 'utf8')
-            : '';
-
-        // Split logs into lines and keep only the latest 999 lines
-        let logLines = existingLogs.split('\n');
-        if (logLines.length > 999) {
-            logLines = logLines.slice(0, 999);
-        }
-
-        // Prepend new message and join lines back together
-        fs.writeFileSync('service.log', logMessage + logLines.join('\n'));
-    } catch (err) {
-        console.error('Error writing to log file:', err);
-        console.log('Original message:', message);
-    }
-}
-
-// Health check endpoint - no rate limit or origin check for monitoring
-app.get('/healthcheck', (req, res, next) => {
-    res.status(200).send({ status: "OK", timestamp: new Date().toISOString() });
-});
-
-// Main routes
+// Home route - for authorization testing
 app.get('/', (req, res) => {
-    res.status(200).send({status: "OK"});
+    res.status(200).send({ status: "AUTHORIZED" });
 });
 
+// The main endpoint - get alerts
 app.get('/alerts', async (req, res) => {
     try {
         const data = await fs.promises.readFile('alerts.json', 'utf8');
@@ -244,39 +277,52 @@ app.get('/alerts', async (req, res) => {
             count: alerts.length,
             alerts: alerts 
         });
+
     } catch (err) {
         console.error('Error handling alerts request:', err);
         nosyncLog(`Error serving alerts: ${err.message}`);
         res.status(500).send({ 
             status: "ERROR", 
-            message: "Internal server error while retrieving alerts." 
+            message: "Internal server error while retrieving alerts.",
+            extra_info: err.message.toString() 
         });
     }
 });
 
-// Error handlers
+// 404 for requests to nonexistent endpoints
 app.use((req, res, next) => {
     res.status(404).send({ 
         status: "ERROR", 
-        message: "Endpoint not found" 
+        message: "Not found" 
     });
 });
 
+// Other internal error handler
 app.use((err, req, res, next) => {
     console.error('Unhandled error:', err);
     nosyncLog(`Unhandled error: ${err.message}`);
     res.status(500).send({ 
         status: "ERROR", 
-        message: "Internal server error" 
+        message: "Internal server error",
+        extra_info: err.message.toString()
     });
 });
 
+
+// Start the server
 app.listen(port, () => {
-    console.log(`API is running on http://localhost:${port}`);
-    nosyncLog(`API is running on http://localhost:${port}`);
+    console.log(`API is now running at http://localhost:${port}`);
+    nosyncLog(`API is now running at http://localhost:${port}`);
 });
 
 
+
+
+
+
+// ================================================================
+// Alert retrieval and processing logic for the NWWS-OI XMPP feed
+// ================================================================
 
 (async () => {
     // Imports
@@ -285,7 +331,6 @@ app.listen(port, () => {
 
     var xml2js = require('xml2js');
     var { client, xml } = await import('@xmpp/client');
-    var player = require('play-sound')(); // DEBUG
     var fs = require('fs');
     var path = require('path');
 
