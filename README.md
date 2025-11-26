@@ -16,6 +16,7 @@ Built for and used in [Spark Radar](https://sparkradar.app).
 ## Why SparkAlerts?
 
 - **Simple.** SparkAlerts requires little setup and integrates right in with your current environment.
+- **Stable.** SparkAlerts is actively maintained and supported by the community.
 - **Lightweight.** SparkAlerts runs on few files dependencies.
 - **Secure.** SparkAlerts was built with security in mind, using CORS and API keys by default.
 - **FOSS.** SparkAlerts is free to use for everyone and open source. If you would like to support SparkAlerts, you can donate [here](https://www.buymeacoffee.com/nimbusapps).
@@ -27,7 +28,7 @@ You will need an NWWS-OI account, which can be requested [here](https://www.weat
 
 - [Setup .env file](https://github.com/tgranz/SparkAlerts?tab=readme-ov-file#environment-setup).
 
-- Install the necessary packages with `npm install`
+- Install the necessary packages with `npm install`.
 
 - Run the server with `node index.js`.
 
@@ -42,8 +43,13 @@ Paste this template in a new file named `.env` in the same directory as `index.j
 # NWWS-OI Login credentials
 XMPP_USERNAME={your nwws-oi username}
 XMPP_PASSWORD={your nwws-oi password}
+XMPP_RESOURCE={optional; name of your service, intent, etc.}
 
 # Security Settings
-DOMAIN_WHITELIST={optional; a comma-separated list of origins or domains to always allow accessing the api}
 ALLOW_NO_ORIGIN={sets whether requests excluding origins should be allowed to bypass cors and api keys}
+DOMAIN_WHITELIST={optional; a comma-separated list of origins or domains to always allow accessing the api}
+
+# XMPP Settings
+MAX_RECONNECT_ATTEMPTS={optional; maximum reconnect retries, default is 10}
+INITIAL_RECONNECT_DELAY={optional; reconnect timeout, increases exponentially with each retry, in ms, default is 2000}
 ```
