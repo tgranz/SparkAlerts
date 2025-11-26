@@ -16,7 +16,7 @@ Built for and used in [Spark Radar](https://sparkradar.app).
 ## Why SparkAlerts?
 
 - **Simple.** SparkAlerts requires little setup and integrates right in with your current environment.
-- **Lightweight.** SparkAlerts runs on one file and few dependencies.
+- **Lightweight.** SparkAlerts runs on few files dependencies.
 - **Secure.** SparkAlerts was built with security in mind, using CORS and API keys by default.
 - **FOSS.** SparkAlerts is free to use for everyone and open source. If you would like to support SparkAlerts, you can donate [here](https://www.buymeacoffee.com/nimbusapps).
 
@@ -25,7 +25,7 @@ Built for and used in [Spark Radar](https://sparkradar.app).
 ## Run
 You will need an NWWS-OI account, which can be requested [here](https://www.weather.gov/nwws/nwws_oi_request). To learn more about the NWWS, see [here](https://www.weather.gov/nwws/).
 
-- [Setup .env file](https://github.com/tgranz/SparkAlerts?tab=readme-ov-file#environment%20setup).
+- [Setup .env file](https://github.com/tgranz/SparkAlerts?tab=readme-ov-file#environment-setup).
 
 - Install the necessary packages with `npm install`
 
