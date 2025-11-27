@@ -203,7 +203,6 @@ const validateRequest = (req, res, next) => {
 app.use(express.json());
 app.use(cors(corsOptions));
 app.use(apiRateLimiter)
-app.use(validateRequest);
 
 
 // Ping endpoint - for uptime monitoring (no auth)
@@ -211,32 +210,14 @@ app.get('/ping', (req, res) => {
     res.status(200).send({ status: "OK" });
 });
 
-// Ensure /ping runs before global auth/rate-limit middleware by moving its layer to the front
-try {
-    const stack = app._router && app._router.stack;
-    if (Array.isArray(stack)) {
-        const pingIdx = stack.findIndex(layer =>
-            layer.route && layer.route.path === '/ping' && layer.route.methods && layer.route.methods.get
-        );
-        if (pingIdx > -1) {
-            const [pingLayer] = stack.splice(pingIdx, 1);
-            stack.unshift(pingLayer);
-            console.log('Moved /ping route to front of middleware stack to bypass auth.');
-            nosyncLog('Moved /ping route to front of middleware stack to bypass auth.');
-        }
-    }
-} catch (err) {
-    console.warn('Failed to reorder middleware stack for /ping:', err.message);
-    nosyncLog(`Failed to reorder middleware stack for /ping: ${err.message}`);
-}
-
+// Apply validateRequest only to protected routes
 // Home route - for authorization testing
-app.get('/', (req, res) => {
+app.get('/', validateRequest, (req, res) => {
     res.status(200).send({ status: "AUTHORIZED" });
 });
 
 // The main endpoint - get alerts
-app.get('/alerts', async (req, res) => {
+app.get('/alerts', validateRequest, async (req, res) => {
     try {
         const data = await fs.promises.readFile('alerts.json', 'utf8');
         const alerts = JSON.parse(data);
