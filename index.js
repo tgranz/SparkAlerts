@@ -95,7 +95,7 @@ function generateSignature(apiKey, timestamp, method, path) {
 const corsOptions = {
     origin: function (origin, callback) {
         
-        if (process.env.ALLOW_NO_ORIGIN) { if (!origin) return callback(null, true); }
+        if (process.env.ALLOW_NO_ORIGIN) { if (!origin || origin == '') return callback(null, true); }
         
         // Allow requests from whitelisted origins
         process.env.DOMAIN_WHITELIST.split(',').forEach((domain) => {
@@ -149,6 +149,15 @@ const validateRequest = (req, res, next) => {
             return next();
         }
     });
+
+
+    // Allow requests with no origin if configured
+    if (process.env.ALLOW_NO_ORIGIN) {
+        if (!origin || origin == '') {
+            nosyncLog(`Authorized access with no origin.`);
+            return next();
+        }
+    }
 
     // For non-whitelisted origins, require api key
     if (!authHeader || !authHeader.startsWith('Bearer ')) {
