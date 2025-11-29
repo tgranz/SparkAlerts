@@ -152,8 +152,8 @@ const validateRequest = (req, res, next) => {
 
 
     // Allow requests with no origin if configured
-    if (process.env.ALLOW_NO_ORIGIN) {
-        if (!origin || origin == '') {
+    if (process.env.ALLOW_NO_ORIGIN == 'true') {
+        if (origin == '') {
             nosyncLog(`Authorized access with no origin.`);
             return next();
         }
