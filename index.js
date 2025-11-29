@@ -231,9 +231,9 @@ app.get('/alerts', validateRequest, async (req, res) => {
         var alerts = [];
         try{
             const data = await fs.promises.readFile('alerts.json', 'utf8');
-            const alerts = JSON.parse(data);
+            alerts = JSON.parse(data);
         } catch {
-            const alerts = [];
+            alerts = [];
         }
 
         res.status(200).send({ 
