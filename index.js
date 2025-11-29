@@ -57,18 +57,21 @@ if (!process.env.XMPP_USERNAME) {
 
 // Set up the express webserver
 const app = express();
-const port = 8433;
+var port = 8433;
+if (process.env.EXPRESS_PORT) {
+    var port = parseInt(process.env.EXPRESS_PORT);
+}
 
 // API keys configuration
 /*format:
 
 aaa: {
-            name: 'Development API Key',
-            rateLimit: 100, // requests per window
-            whitelist: [], // allowed IPs/domains
-            lastUsed: null,
-            active: true
-        }
+    name: 'Development API Key',
+    rateLimit: 100, // requests per window
+    whitelist: [], // allowed IPs/domains
+    lastUsed: null,
+    active: true
+}
 
 */
 let API_KEYS = {};
