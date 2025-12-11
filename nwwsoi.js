@@ -337,6 +337,11 @@ var password = null;
     try {
         await xmpp.start();
     } catch (err) {
+        if (err.toString().includes('not-authorized') || err.errno in [-3001, -101]) {
+            console.error('XMPP Authentication failed: Check your username and password in the .env file.');
+            log('XMPP Authentication failed: Check your username and password.');
+            process.exit(1);
+        }
         console.error('\nFailed to start XMPP client:', err);
         log('Failed to start XMPP client:' + err);
         process.exit(1);
