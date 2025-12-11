@@ -145,13 +145,14 @@ const validateRequest = (req, res, next) => {
     const signature = req.get('X-Signature');
     
     // Allow requests from whitelisted domains
-    process.env.DOMAIN_WHITELIST.split(',').forEach((domain) => {
-        domain = domain.trim();
-        if (origin.includes(domain)) {
+    const whitelistedDomains = process.env.DOMAIN_WHITELIST.split(',');
+    for (const domain of whitelistedDomains) {
+        const trimmedDomain = domain.trim();
+        if (origin.includes(trimmedDomain)) {
             nosyncLog(`Authorized access from whitelisted domain: ${origin}`);
             return next();
         }
-    });
+    }
 
 
     // Allow requests with no origin if configured
