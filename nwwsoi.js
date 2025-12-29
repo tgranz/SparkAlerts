@@ -27,39 +27,56 @@ var password = null;
     const wsModule = await import('ws');
     global.WebSocket = wsModule.default || wsModule.WebSocket || wsModule;
 
+    // Variable to store the interval ID so we can stop it if needed
+    let deleteExpiredAlertsInterval = null;
+
     // Task to clean up the alerts.json file
     async function deleteExpiredAlerts() {
         try {
-            // Read in the database
-            const data = JSON.parse(fs.readFileSync('alerts.json', 'utf8'));
+            let alerts = [];
 
-            // If the alert is expired, remove it
-            for (let alert of data) {
-                let expiry = new Date(alert.expiry);
-                let now = new Date();
-                if (now > expiry) data.splice(data.indexOf(alert), 1);
+            try {
+                const raw = fs.readFileSync('alerts.json', 'utf8');
+                alerts = raw.trim() ? JSON.parse(raw) : [];
+                if (!Array.isArray(alerts)) alerts = [];
+            } catch (readErr) {
+                if (readErr.code !== 'ENOENT') {
+                    console.warn('alerts.json unreadable during cleanup:', readErr.message);
+                    log('alerts.json unreadable during cleanup: ' + readErr.message);
+                }
+                return; // Nothing to clean
             }
 
-            // Write the cleaned database back to file
-            fs.writeFile('alerts.json', JSON.stringify(data, null, 2), (err) => { });
+            // Filter out expired alerts (iterate backwards to avoid issues)
+            const now = new Date();
+            const initialCount = alerts.length;
+            alerts = alerts.filter(alert => {
+                if (!alert.expiry) return true; // Keep alerts without expiry
+                const expiry = new Date(alert.expiry);
+                return now <= expiry; // Keep only non-expired alerts
+            });
+
+            const removedCount = initialCount - alerts.length;
+
+            // Write back only if something was removed
+            if (removedCount > 0) {
+                fs.writeFileSync('alerts.json', JSON.stringify(alerts, null, 2));
+                console.log(`Expired alerts cleanup: removed ${removedCount} alert(s).`);
+                log(`Expired alerts cleanup: removed ${removedCount} alert(s).`);
+            } else {
+                console.log('Expired alerts cleanup: no expired alerts found.');
+            }
         } catch (err) {
-            log('Error in database cleanup:', err);
+            log('Error in database cleanup: ' + err);
             console.error('Error in database cleanup:', err);
         }
     }
 
     // Run the deleteExpiredAlerts task every minute
-    try {
-        if (!deleteExpiredAlertsInterval) {
-            deleteExpiredAlerts();
-            deleteExpiredAlertsInterval = setInterval(deleteExpiredAlerts, 60 * 1000);
-        }
-    } catch (err) {}
-
-
-
-    // Variable to store the interval ID so we can stop it if needed
-    let deleteExpiredAlertsInterval = null;
+    if (!deleteExpiredAlertsInterval) {
+        deleteExpiredAlerts();
+        deleteExpiredAlertsInterval = setInterval(deleteExpiredAlerts, 60 * 1000);
+    }
 
     // Connection management
     let reconnectAttempt = 0;
@@ -159,11 +176,12 @@ var password = null;
     // Event listener for incoming stanzas (messages)
     xmpp.on('stanza', (stanza) => {
 
+
         // Ignore non-message stanzas (specifically presence notifications)
-        if (!stanza.is('message')) { return; }
+        if (!stanza.is('message')) { console.log("Ignoring non-message stanza."); return; }
 
         // The chat room sends this warning when a user joins, safely ignore it
-        if (stanza.toString().includes("**WARNING**WARNING**WARNING**WARNING")) { return; }
+        if (stanza.toString().includes("**WARNING**WARNING**WARNING**WARNING")) { console.log("Ignoring non-message stanza."); return; }
 
         // Turn the XML to JSON because I hate XML
         var xml = stanza.toString();
@@ -200,8 +218,22 @@ var password = null;
             // https://www.weather.gov/bmx/vtec
 
             try {
+                // Try to find VTEC in raw text first
                 var vtec = rawText.match(/\/O\..*?\/\n?/);
-                vtecObjects = vtec.split('.');
+                
+                /*<parameter>
+                    <valueName>VTEC</valueName>
+                    <value>/O.NEW.KDLH.SC.Y.0147.251220T0000Z-251220T1200Z/</value>
+                </parameter>*/
+
+                if (!vtec) {
+                    vtec = rawText.match(/<parameter>\s*<valueName>VTEC<\/valueName>\s*<value>(.*?)<\/value>\s*<\/parameter>/);
+                    if (vtec && vtec[1]) vtec = vtec[1];
+                }
+                
+                if (!vtec) throw new Error('No VTEC found');
+                
+                vtecObjects = (typeof vtec === 'string' ? vtec : vtec[0]).split('.');
 
                 // Function to convert VTEC time to ISO UTC timestamp
                 function vtecToIso(ts) {
@@ -232,14 +264,98 @@ var password = null;
                 return;
             }
 
+            var acceptPhenomena = [
+                'TO', // Tornado
+                'SV', // Severe Thunderstorm
+                'FF', // Flash Flood
+                'MA', // Marine
+                'AF', // Air Quality
+                'HU', // Hurricane
+                'TR', // Tropical Storm
+                'TY', // Typhoon
+                'FL', // Flood
+                'SQ', // Snow Squall
+                'LW', // Lake Wind
+                'UP', // Heavy Freezing Spray
+                'ZR', // Freezing Rain
+                'WS', // Winter Storm
+                'IS', // Ice Storm
+                'LE', // Lakeshore Flood
+                'WW', // Winter Weather
+                'CF'  // Coastal Flood
+            ]
+
+            if (!acceptPhenomena.includes(thisObject.phenomena)) {
+                // Not an alert type we care about
+                console.log('Ignoring alert with phenomena code:', thisObject.phenomena);
+                return;
+            }
+
             // ================================================================================
+
+            if (thisObject.actions === 'CAN' || thisObject.actions === 'EXP') {
+                // This is a cancellation or expiration, delete the alert from the database
+                try {
+                    let alerts = [];
+
+                    try {
+                        const raw = fs.readFileSync('alerts.json', 'utf8');
+                        alerts = raw.trim() ? JSON.parse(raw) : [];
+                        if (!Array.isArray(alerts)) alerts = [];
+                    } catch (readErr) {
+                        // If the file is missing or malformed, nothing to delete
+                        if (readErr.code !== 'ENOENT') {
+                            console.warn('alerts.json unreadable, cannot delete alert:', readErr.message);
+                            log('alerts.json unreadable, cannot delete alert: ' + readErr.message);
+                        }
+                        alerts = [];
+                    }
+
+                    // Find and remove matching alert
+                    const alertIndex = alerts.findIndex(alert => 
+                        alert.properties &&
+                        alert.properties.vtec &&
+                        alert.properties.vtec.office === thisObject.office &&
+                        alert.properties.vtec.phenomena === thisObject.phenomena &&
+                        alert.properties.vtec.significance === thisObject.significance &&
+                        alert.properties.vtec.eventTrackingNumber === thisObject.eventTrackingNumber
+                    );
+
+                    if (alertIndex !== -1) {
+                        const removedAlert = alerts.splice(alertIndex, 1)[0];
+                        fs.writeFileSync('alerts.json', JSON.stringify(alerts, null, 2));
+                        console.log('Alert cancelled/expired and removed:', removedAlert.name);
+                        log('Alert cancelled/expired and removed: ' + removedAlert.name);
+                    } else {
+                        console.log('No matching alert found to cancel/expire.');
+                        log('No matching alert found to cancel/expire.');
+                    }
+                } catch (err) {
+                    console.error('Error updating alerts.json for cancellation/expiration:', err);
+                    log('Error updating alerts.json for cancellation/expiration: ' + err);
+                }
+                return;
+            } else if (thisObject.actions !== 'UPG' || thisObject.actions !== 'COR' || thisObject.actions !== 'CON') {
+                // Update, correction, or continuation
+                // TODO: Implement update/correction logic
+                // Preserve coordinates and other data not included with update.
+            }
 
             // Extract alert name
             var alertNameMatch = rawText.match(/BULLETIN.*?\s+(.*?)\s+National Weather Service/);
             var alertName = alertNameMatch ? alertNameMatch[1].trim() : null;
 
+            if (!alertName) {
+                // Different format: <event>Snow Squall Warning</event>
+                alertNameMatch = rawText.match(/<event>(.*?)<\/event>/);
+                alertName = alertNameMatch ? alertNameMatch[1].trim() : 'Unknown Alert';
+            }
+            
             // Extract recieved time
-            var recievedTime = body.message.x[0].$.issued;
+            var recievedTime = null;
+            try {
+                recievedTime = body.message.x[0].$.issued;
+            } catch {}
 
             // Extract lat/lon
             var latLonMatch = rawText.match(/LAT\.\.\.LON\s+([\d\s]+)/);
@@ -277,14 +393,23 @@ var password = null;
             }
 
             // Simple message beautification
+            // TODO: filter and parse messages with description and instruction tags
             var message = rawText.replace(/\n\n/g, '\n').replace(/\n/g, ' ');
+
+            var idString = thisObject.product_type + thisObject.office + (Math.random() * 1000000).toFixed(0);
+
+            var headline = null;
+            try {
+                headline = rawText.split('\n')[0].replace('BULLETIN - ', '').trim();
+            } catch {}
 
             // Output parsed result
             var parsedAlert = {
                 name: alertName,
+                id: idString,
                 coordinates: coordinates,
                 sender: thisObject.office,
-                headline: rawText.split('\n')[0].replace('BULLETIN - ', '').trim(),
+                headline: headline,
                 issued: thisObject.startTime,
                 expiry: thisObject.endTime,
                 message: message,
@@ -298,12 +423,27 @@ var password = null;
                 }
             };
 
-            // Append the alert to alerts.json
+            // Append the alert to alerts.json (tolerate empty/invalid file)
             try {
-                let alertsData = fs.readFileSync('alerts.json', 'utf8');
-                let alerts = JSON.parse(alertsData);
+                let alerts = [];
+
+                try {
+                    const raw = fs.readFileSync('alerts.json', 'utf8');
+                    alerts = raw.trim() ? JSON.parse(raw) : [];
+                    if (!Array.isArray(alerts)) alerts = [];
+                } catch (readErr) {
+                    // If the file is missing or malformed, start fresh
+                    if (readErr.code !== 'ENOENT') {
+                        console.warn('alerts.json unreadable, recreating file:', readErr.message);
+                        log('alerts.json unreadable, recreating file: ' + readErr.message);
+                    }
+                    alerts = [];
+                }
+
                 alerts.push(parsedAlert);
                 fs.writeFileSync('alerts.json', JSON.stringify(alerts, null, 2));
+                console.log('Alert stored successfully:', parsedAlert.name);
+                log('Alert stored successfully: ' + parsedAlert.name);
             } catch (err) {
                 console.error('Error updating alerts.json:', err);
                 log('Error updating alerts.json:', err);
@@ -316,6 +456,15 @@ var password = null;
     xmpp.on('error', (err) => {
         console.error('XMPP error:', err);
         log('XMPP error: ' + err.toString());
+        
+        // Handle DNS/network errors with reconnection
+        if (err.errno === -3001 || err.code === 'EAI_AGAIN' || err.code === 'ENOTFOUND' || err.code === 'ETIMEDOUT') {
+            console.log('Network error detected, attempting reconnection...');
+            log('Network error detected: ' + err.code + ' - Initiating reconnection.');
+            handleReconnect();
+            return;
+        }
+        
         // Clean up interval on error
         if (deleteExpiredAlertsInterval) {
             clearInterval(deleteExpiredAlertsInterval);
@@ -337,13 +486,23 @@ var password = null;
     try {
         await xmpp.start();
     } catch (err) {
-        if (err.toString().includes('not-authorized') || err.errno in [-3001, -101]) {
+        // Handle authentication errors
+        if (err.toString().includes('not-authorized')) {
             console.error('XMPP Authentication failed: Check your username and password in the .env file.');
             log('XMPP Authentication failed: Check your username and password.');
             process.exit(1);
         }
+        
+        // Handle DNS/network errors with reconnection
+        if (err.errno === -3001 || err.code === 'EAI_AGAIN' || err.code === 'ENOTFOUND' || err.code === 'ETIMEDOUT') {
+            console.error('Network/DNS error connecting to XMPP server:', err.message);
+            log('Network/DNS error: ' + err.message + ' - Will retry connection.');
+            handleReconnect();
+            return;
+        }
+        
         console.error('\nFailed to start XMPP client:', err);
-        log('Failed to start XMPP client:' + err);
+        log('Failed to start XMPP client: ' + err);
         process.exit(1);
     }
 
