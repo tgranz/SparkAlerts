@@ -50,7 +50,7 @@ if (!process.env.XMPP_USERNAME) {
     console.error('.env file is missing XMPP_PASSWORD variable. Check https://github.com/tgranz/SparkAlerts?tab=readme-ov-file#environment-setup for details.');
     process.exit(1);
 } else if (!process.env.ALLOW_NO_ORIGIN) {
-    console.error('.env file is missing XMPP_PASSWORD variable. Check https://github.com/tgranz/SparkAlerts?tab=readme-ov-file#environment-setup for details.');
+    console.error('.env file is missing ALLOW_NO_ORIGIN variable. Check https://github.com/tgranz/SparkAlerts?tab=readme-ov-file#environment-setup for details.');
     process.exit(1);
 }
 
@@ -78,10 +78,15 @@ let API_KEYS = {};
 if (process.env.API_KEYS_JSON) {
     try {
         API_KEYS = JSON.parse(process.env.API_KEYS_JSON);
+        console.log(`Loaded ${Object.keys(API_KEYS).length} API key(s) from environment.`);
     } catch (e) {
         console.warn('API_KEYS contains invalid JSON! Error:', e.message);
     }
-} else if (!process.env.ALLOW_NO_ORIGIN && process.env.DOMAIN_WHITELIST == null) {
+} else {
+    console.log('No API keys configured.');
+}
+
+if (!process.env.ALLOW_NO_ORIGIN && process.env.DOMAIN_WHITELIST == null) {
     console.error('You have no API keys, no whitelisted domains, and do not allow no-origin requests. You cannot access the API!');
 }
 
@@ -94,21 +99,36 @@ function generateSignature(apiKey, timestamp, method, path) {
 }
 
 
+// Parse domain whitelist once at startup
+const DOMAIN_WHITELIST = process.env.DOMAIN_WHITELIST ? process.env.DOMAIN_WHITELIST.split(',').map(d => d.trim()) : [];
+if (DOMAIN_WHITELIST.length > 0) {
+    console.log(`Loaded ${DOMAIN_WHITELIST.length} whitelisted domain(s): ${DOMAIN_WHITELIST.join(', ')}`);
+}
+if (process.env.ALLOW_NO_ORIGIN === 'true') {
+    console.log('No-origin requests are allowed.');
+}
+
 // CORS configuration
 const corsOptions = {
     origin: function (origin, callback) {
         
-        if (process.env.ALLOW_NO_ORIGIN) { if (!origin || origin == '') return callback(null, true); }
-        
-        // Allow requests from whitelisted origins
-        process.env.DOMAIN_WHITELIST.split(',').forEach((domain) => {
-            domain = domain.trim();
-            if (origin.includes(domain)) {
+        if (process.env.ALLOW_NO_ORIGIN === 'true') { 
+            if (!origin || origin == '') {
+                console.log('CORS: Allowing no-origin request');
                 return callback(null, true);
             }
-        });
+        }
+        
+        // Allow requests from whitelisted origins
+        for (const domain of DOMAIN_WHITELIST) {
+            if (origin && origin.includes(domain)) {
+                console.log(`CORS: Allowing whitelisted origin: ${origin}`);
+                return callback(null, true);
+            }
+        }
         
         // For other origins, we'll validate their API key and signature in the request handler
+        console.log(`CORS: Non-whitelisted origin will require API key: ${origin}`);
         callback(null, true);
     },
 
@@ -144,28 +164,28 @@ const validateRequest = (req, res, next) => {
     const timestamp = req.get('X-Request-Time');
     const signature = req.get('X-Signature');
     
+    console.log(`[${req.method}] ${req.path} - Origin: ${origin || 'none'}`);
+    
     // Allow requests from whitelisted domains
-    const whitelistedDomains = process.env.DOMAIN_WHITELIST.split(',');
-    for (const domain of whitelistedDomains) {
-        const trimmedDomain = domain.trim();
-        if (origin.includes(trimmedDomain)) {
+    for (const domain of DOMAIN_WHITELIST) {
+        if (origin && origin.includes(domain)) {
             nosyncLog(`Authorized access from whitelisted domain: ${origin}`);
+            console.log(`✓ Whitelisted domain authorized: ${domain}`);
             return next();
         }
     }
 
-
     // Allow requests with no origin if configured
-    if (process.env.ALLOW_NO_ORIGIN == 'true') {
+    if (process.env.ALLOW_NO_ORIGIN === 'true') {
         if (origin == '') {
-            nosyncLog(`Authorized access with no origin.`);
-            return next();
+            nosyncLog(`Authorized access with no origin.`);            console.log('✓ No-origin request authorized');            return next();
         }
     }
 
     // For non-whitelisted origins, require api key
     if (!authHeader || !authHeader.startsWith('Bearer ')) {
         nosyncLog(`Missing or invalid Authorization header from: ${origin}`);
+        console.log(`✗ Auth failed: Missing or invalid Authorization header`);
         return res.status(401).json({
             status: "ERROR",
             message: "Missing or invalid 'Authorization' header"
@@ -174,10 +194,12 @@ const validateRequest = (req, res, next) => {
 
     const apiKey = authHeader.split(' ')[1];
     const keyConfig = API_KEYS[apiKey];
+    console.log(`Validating API key: ${apiKey.substring(0, 8)}...`);
 
     // Validate API key
     if (!keyConfig || !keyConfig.active) {
         nosyncLog(`Invalid or inactive API key from: ${origin}`);
+        console.log(`✗ Auth failed: Invalid or inactive API key`);
         return res.status(401).json({
             status: "ERROR",
             message: "Invalid or inactive API key"
@@ -187,6 +209,7 @@ const validateRequest = (req, res, next) => {
     // Validate timestamp (within 5 minutes)
     if (!timestamp || Math.abs(Date.now() - parseInt(timestamp)) > 300000) {
         nosyncLog(`Invalid or expired timestamp from: ${origin}`);
+        console.log(`✗ Auth failed: Invalid or expired timestamp`);
         return res.status(401).json({
             status: "ERROR",
             message: "Request timestamp invalid or expired"
@@ -197,6 +220,7 @@ const validateRequest = (req, res, next) => {
     const expectedSignature = generateSignature(apiKey, timestamp, req.method, req.path);
     if (!signature || signature !== expectedSignature) {
         nosyncLog(`Invalid signature from: ${origin}`);
+        console.log(`✗ Auth failed: Invalid signature`);
         return res.status(401).json({
             status: "ERROR",
             message: "Invalid request signature"
@@ -208,6 +232,7 @@ const validateRequest = (req, res, next) => {
     
     // Request is authenticated
     nosyncLog(`Authorized access with valid API key from: ${origin}`);
+    console.log(`✓ API key authorized: ${keyConfig.name || 'Unnamed key'}`);
     next();
 };
 
@@ -236,10 +261,13 @@ app.get('/alerts', validateRequest, async (req, res) => {
         try{
             const data = await fs.promises.readFile('alerts.json', 'utf8');
             alerts = JSON.parse(data);
-        } catch {
+            console.log(`Loaded ${alerts.length} alert(s) from alerts.json`);
+        } catch (err) {
+            console.log('No alerts.json file found or empty, returning empty array');
             alerts = [];
         }
 
+        console.log(`Responding with ${alerts.length} alert(s)`);
         res.status(200).send({ 
             status: "OK",
             count: alerts.length,
