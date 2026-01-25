@@ -113,7 +113,9 @@ const corsOptions = {
     origin: function (origin, callback) {
         
         if (process.env.ALLOW_NO_ORIGIN === 'true') { 
-            if (!origin || origin == '') {
+            // Some browsers send the string 'null' as the Origin header
+            // when the page is loaded from a local file or sandboxed context.
+            if (!origin || origin == '' || origin === 'null') {
                 console.log('CORS: Allowing no-origin request');
                 return callback(null, true);
             }
@@ -178,8 +180,12 @@ const validateRequest = (req, res, next) => {
 
     // Allow requests with no origin if configured
     if (process.env.ALLOW_NO_ORIGIN === 'true') {
-        if (origin == '') {
-            nosyncLog(`Authorized access with no origin.`);            console.log('✓ No-origin request authorized');            return next();
+        // Accept the literal 'null' value as a no-origin request as some
+        // browsers (or file:// contexts) send Origin: null.
+        if (origin == '' || origin === 'null' || !origin) {
+            nosyncLog(`Authorized access with no origin.`);
+            console.log('✓ No-origin request authorized');
+            return next();
         }
     }
 
