@@ -128,12 +128,13 @@ const corsOptions = {
         }
         
         // For other origins, we'll validate their API key and signature in the request handler
-        console.log(`CORS: Non-whitelisted origin will require API key: ${origin}`);
-        callback(null, true);
+        // Deny CORS here for non-whitelisted origins so browsers enforce restrictions.
+        console.log(`CORS: Denying CORS for non-whitelisted origin: ${origin}`);
+        return callback(null, false);
     },
 
     methods: ['GET', 'POST', 'OPTIONS'],
-    allowedHeaders: ['Content-Type', 'Authorization'],
+    allowedHeaders: ['Content-Type', 'Authorization', 'X-Request-Time', 'X-Signature', 'X-Requested-With'],
     credentials: true,
     optionsSuccessStatus: 204
 };
