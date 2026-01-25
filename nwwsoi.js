@@ -16,10 +16,14 @@ const { nosyncLog } = require('./logging.js').nosyncLog;
 const xml2js = require('xml2js');
 const path = require('path');
 const { log } = require('./logging.js');
+const { sign } = require('crypto');
 
 // For storing crexentials
 var username = null;
 var password = null;
+var resource = null;
+var MAX_RECONNECT_ATTEMPTS = 10;
+var INITIAL_RECONNECT_DELAY = 2000;
 
 (async () => {
     // Polyfill WebSocket for @xmpp/client
@@ -32,6 +36,7 @@ var password = null;
 
     // Task to clean up the alerts.json file
     async function deleteExpiredAlerts() {
+        console.log('Running expired alerts cleanup...');
         try {
             let alerts = [];
 
@@ -85,6 +90,7 @@ var password = null;
 
     // Function to create XMPP client object
     function createXMPPClient() {
+        console.log('Creating XMPP client...');
         // Read XMPP configuration from environment variables to avoid hard-coding credentials.
         const xmppConfig = {
             service: 'xmpp://nwws-oi.weather.gov',
@@ -98,6 +104,8 @@ var password = null;
             console.warn('No credentials found in .env file! Did you set XMPP_USERNAME and XMPP_PASSWORD variables?');
             process.exit(1);
         }
+        
+        console.log(`Connecting as ${xmppConfig.username} with resource: ${xmppConfig.resource}`);
 
         const xmpp = client(xmppConfig);
 
@@ -117,14 +125,17 @@ var password = null;
     }
 
     async function handleReconnect() {
+        console.log('Handling reconnection...');
         // Clear any existing intervals
         if (deleteExpiredAlertsInterval) {
             clearInterval(deleteExpiredAlertsInterval);
             deleteExpiredAlertsInterval = null;
+            console.log('Cleared existing cleanup interval');
         }
 
         if (reconnectAttempt >= MAX_RECONNECT_ATTEMPTS) {
             log('Max reconnection attempts reached. Check network connection and credentials, or increase MAX_RECONNECT_ATTEMPTS.');
+            console.error('FATAL: Max reconnection attempts reached!');
             process.exit(1);
         }
 
@@ -140,9 +151,11 @@ var password = null;
             // Attempt to create and start a new XMPP client
             xmpp = createXMPPClient();
             await xmpp.start();
+            console.log('Reconnection successful!');
         } catch (err) {
             // If restart fails, log and try again
             log(`Reconnection attempt failed: ${err.message}`);
+            console.error(`Reconnection attempt ${reconnectAttempt} failed:`, err.message);
             handleReconnect();
         }
     }
@@ -285,9 +298,19 @@ var password = null;
                 'CF'  // Coastal Flood
             ]
 
+            // Just these for now
+
+            acceptPhenomena = [
+                'TO', // Tornado
+                'SV', // Severe Thunderstorm
+            ]
+
             if (!acceptPhenomena.includes(thisObject.phenomena)) {
                 // Not an alert type we care about
                 console.log('Ignoring alert with phenomena code:', thisObject.phenomena);
+                return;
+            } else if (!thisObject.significance.includes('W')) {
+                console.log("Ignoring alert with significance code:", thisObject.significance);
                 return;
             }
 
@@ -335,8 +358,13 @@ var password = null;
                     log('Error updating alerts.json for cancellation/expiration: ' + err);
                 }
                 return;
-            } else if (thisObject.actions !== 'UPG' || thisObject.actions !== 'COR' || thisObject.actions !== 'CON') {
+            } else if (thisObject.actions !== 'UPG' && thisObject.actions !== 'COR' && thisObject.actions !== 'CON') {
+                // Not update, correction, or continuation
+                console.log(`Alert action type '${thisObject.actions}' - processing as new alert`);
+                // Continue to process as new alert
+            } else {
                 // Update, correction, or continuation
+                console.log(`Alert action '${thisObject.actions}' detected - update/correction/continuation`);
                 // TODO: Implement update/correction logic
                 // Preserve coordinates and other data not included with update.
             }
@@ -351,11 +379,19 @@ var password = null;
                 alertName = alertNameMatch ? alertNameMatch[1].trim() : 'Unknown Alert';
             }
             
+            console.log(`Processing alert: ${alertName}`);
+            
             // Extract recieved time
             var recievedTime = null;
             try {
-                recievedTime = body.message.x[0].$.issued;
-            } catch {}
+                // Try to extract from the result object
+                if (result.message.x && result.message.x[0] && result.message.x[0].$ && result.message.x[0].$.issued) {
+                    recievedTime = result.message.x[0].$.issued;
+                    console.log(`Received time: ${recievedTime}`);
+                }
+            } catch (err) {
+                console.log('Could not extract received time');
+            }
 
             // Extract lat/lon
             var latLonMatch = rawText.match(/LAT\.\.\.LON\s+([\d\s]+)/);
@@ -364,6 +400,7 @@ var password = null;
 
             if (latLonMatch) {
                 var nums = latLonMatch[1].trim().split(/\s+/);
+                console.log(`Extracted ${nums.length / 2} coordinate pairs`);
                 for (let i = 0; i < nums.length; i += 2) {
                     coordinates.push({
                         lat: parseFloat(nums[i].slice(0, 2) + '.' + nums[i].slice(2)),
@@ -390,6 +427,16 @@ var password = null;
 
                 // Replace original coordinates with standardized form
                 coordinates = standardCoordinates;
+            } else {
+                // No coordinates found
+                console.log('No coordinates found in alert, skipping');
+                return;
+            }
+
+            // Verify we have valid coordinates after processing
+            if (!coordinates || coordinates.length === 0) {
+                console.log('No valid coordinates after processing, skipping alert');
+                return;
             }
 
             // Simple message beautification
@@ -442,7 +489,7 @@ var password = null;
 
                 alerts.push(parsedAlert);
                 fs.writeFileSync('alerts.json', JSON.stringify(alerts, null, 2));
-                console.log('Alert stored successfully:', parsedAlert.name);
+                console.log(`✓ Alert stored successfully: ${parsedAlert.name} (ID: ${parsedAlert.id})`);
                 log('Alert stored successfully: ' + parsedAlert.name);
             } catch (err) {
                 console.error('Error updating alerts.json:', err);
@@ -515,12 +562,15 @@ var password = null;
 
 // Exports
 module.exports = {
-    start: async () => { },
+    start: async () => { 
+        console.log('NWWS-OI module start() called');
+    },
     auth: (a, b, c, d, e) => {
         username = a;
         password = b; 
         resource = c || 'SparkAlerts NWWS Ingest Client';
         MAX_RECONNECT_ATTEMPTS = d || 10;
         INITIAL_RECONNECT_DELAY = e || 2000;
+        console.log(`NWWS-OI configured: User=${username}, Resource=${resource}, MaxRetries=${MAX_RECONNECT_ATTEMPTS}`);
     }
 };
