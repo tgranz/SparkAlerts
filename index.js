@@ -31,7 +31,7 @@ const { log } = require('node:console');
 const express = require('express');
 const rateLimit = require('express-rate-limit');
 const { ipKeyGenerator } = require('express-rate-limit');
-const cors = require('cors');
+// CORS removed: handled at gateway or not required for this server
 const crypto = require('crypto');
 const { nosyncLog } = require('./logging.js');
 const nwwsoi = require('./nwwsoi.js');
@@ -108,38 +108,9 @@ if (process.env.ALLOW_NO_ORIGIN === 'true') {
     console.log('No-origin requests are allowed.');
 }
 
-// CORS configuration
-const corsOptions = {
-    origin: function (origin, callback) {
-        
-        if (process.env.ALLOW_NO_ORIGIN === 'true') { 
-            // Some browsers send the string 'null' as the Origin header
-            // when the page is loaded from a local file or sandboxed context.
-            if (!origin || origin == '' || origin === 'null') {
-                console.log('CORS: Allowing no-origin request');
-                return callback(null, true);
-            }
-        }
-        
-        // Allow requests from whitelisted origins
-        for (const domain of DOMAIN_WHITELIST) {
-            if (origin && origin.includes(domain)) {
-                console.log(`CORS: Allowing whitelisted origin: ${origin}`);
-                return callback(null, true);
-            }
-        }
-        
-        // For other origins, we'll validate their API key and signature in the request handler
-        // Deny CORS here for non-whitelisted origins so browsers enforce restrictions.
-        console.log(`CORS: Denying CORS for non-whitelisted origin: ${origin}`);
-        return callback(null, false);
-    },
-
-    methods: ['GET', 'POST', 'OPTIONS'],
-    allowedHeaders: ['Content-Type', 'Authorization', 'X-Request-Time', 'X-Signature', 'X-Requested-With'],
-    credentials: true,
-    optionsSuccessStatus: 204
-};
+// Note: CORS is intentionally not configured here. If this API is behind
+// a gateway or reverse proxy that must enforce CORS, configure it there.
+// The request validation logic still enforces API key / signature checks.
 
 
 // Rate limiter based on API key and/or IP
@@ -246,7 +217,7 @@ const validateRequest = (req, res, next) => {
 
 // Apply middleware
 app.use(express.json());
-app.use(cors(corsOptions));
+// CORS middleware removed — CORS should be handled by the gateway/reverse proxy
 app.use(apiRateLimiter)
 
 
