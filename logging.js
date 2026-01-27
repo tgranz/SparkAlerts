@@ -9,8 +9,28 @@ The file is capped at 10,000 lines to prevent it from growing too large.
 // Import
 const fs = require('node:fs');
 
+// Function to load the set level of logging
+var logLevel = "INFO";
+function setLogLevel(setLevel) {
+    logLevel = setLevel;
+}
+
+
+// Function to confirm the log level is sufficient for an incoming log
+function confirmLogLevel(checkLevel) {
+    const levels = ['DEBUG', 'INFO', 'WARN', 'ERROR'];
+    const currentLevelIndex = levels.indexOf(logLevel.toUpperCase());
+    const checkLevelIndex = levels.indexOf(checkLevel.toUpperCase());
+    return checkLevelIndex >= currentLevelIndex;
+}
+
+
 // Function to log messages asynchronously
-function nosyncLog(message) {
+function nosyncLog(message, level) {
+
+    level = (level || 'info').toUpperCase();
+    if (!confirmLogLevel(level)) return;
+
     // Convert to EST and format date
     const date = new Date();
     const estDate = new Date(date.toLocaleString('en-US', { timeZone: 'America/New_York' }));
@@ -23,7 +43,7 @@ function nosyncLog(message) {
         hour12: false
     });
 
-    const logMessage = `[${formattedDate} EST] ${message}\n`;
+    const logMessage = `[${formattedDate} EST] [${level}] ${message}\n`;
 
     // Read existing logs
     try {
@@ -45,7 +65,11 @@ function nosyncLog(message) {
     }
 }
 
-async function log(message) {
+async function log(message, level) {
+
+    level = (level || 'info').toUpperCase();
+    if (!confirmLogLevel(level)) return;
+    
     // Convert to EST and format date
     const date = new Date();
     const estDate = new Date(date.toLocaleString('en-US', { timeZone: 'America/New_York' }));
@@ -58,7 +82,7 @@ async function log(message) {
         hour12: false
     });
 
-    const logMessage = `[${formattedDate} EST] ${message}\n`;
+    const logMessage = `[${formattedDate} EST] [${level}] ${message}\n`;
 
     // Read existing logs
     try {
@@ -82,5 +106,5 @@ async function log(message) {
 
 // Export the nosyncLog function
 module.exports = {
-    nosyncLog, log
+    nosyncLog, log, setLogLevel
 };
