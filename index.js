@@ -1,7 +1,9 @@
 /*
-NWWS-OI XMPP INGEST CLIENT FOR SPARKRADAR.APP
+NWWS-OI XMPP INGEST CLIENT: SPARKALERTS
+Licensed under the Apache License, Version 2.0 (the "License")
+All redistributions of this code must retain the LICENSE file and the copyright below.
 
-(c) 2024 Tyler Granzow - not to be used without permission
+(c) 2026 Tyler Granzow
 
 
 WARNING from the NWWS-OI system:
@@ -16,112 +18,154 @@ All information on the computer system may be intercepted, recorded,
 read, copied, and disclosed by and to authorized personnel for official
 purposes, including criminal investigations. Access or use of the
 computer system by any person whether authorized or unauthorized,
-varITUTES CONSENT to these terms.
+varieties CONSENT to these terms.
 
 **WARNING**WARNING**WARNING**WARNING**WARNING**WARNING**WARNING**WARNING**
 
 */
 
 
+// ========== IMPORTS AND INITIALIZATION ==========
 // Imports
-var { match } = require('assert');
-var { json } = require('stream/consumers');
 const fs = require('node:fs');
-const { log } = require('node:console');
 const express = require('express');
 const rateLimit = require('express-rate-limit');
 const { ipKeyGenerator } = require('express-rate-limit');
-// CORS removed: handled at gateway or not required for this server
-const crypto = require('crypto');
-const { nosyncLog } = require('./logging.js');
+const cors = require('cors');
+const { nosyncLog, setLogLevel } = require('./logging.js');
 const nwwsoi = require('./nwwsoi.js');
 
+// Load environment variables from .env file
 require('dotenv').config();
 
-// Run a check to ensure the required environment variables are set
+// Load configuration JSON file
+let config = {};
+try {
+    const conf = fs.readFileSync('config.json');
+    config = JSON.parse(conf);
+    if (!config.app?.silent_console || true) console.log('Loaded configuration from config.json');
+    setLogLevel(config.app?.log_level || 'WARN');
+} catch (e) {
+    console.error('Failed to load configuration from config.json.\nThe file may not exist or may contain invalid JSON.');
+    process.exit(1);
+}
+
+// Resolve credentials (prefer explicit NWWS_* names, then USERNAME/USER)
+const xmppUser = process.env.XMPP_USERNAME || null;
+const xmppPass = process.env.XMPP_PASSWORD || null;
+
+// Run a check to ensure the XMPP credentials are set
 if (!fs.existsSync('.env')) {
     console.error('No .env file found. Check https://github.com/tgranz/SparkAlerts?tab=readme-ov-file#environment-setup for details.');
     process.exit(1);
 }
-if (!process.env.XMPP_USERNAME) {
-    console.error('.env file is missing XMPP_USERNAME variable. Check https://github.com/tgranz/SparkAlerts?tab=readme-ov-file#environment-setup for details.');
+if (!xmppUser) {
+    console.error('.env file is missing XMPP_USERNAME variable.');
     process.exit(1);
-} else if (!process.env.XMPP_PASSWORD) {
-    console.error('.env file is missing XMPP_PASSWORD variable. Check https://github.com/tgranz/SparkAlerts?tab=readme-ov-file#environment-setup for details.');
-    process.exit(1);
-} else if (!process.env.ALLOW_NO_ORIGIN) {
-    console.error('.env file is missing ALLOW_NO_ORIGIN variable. Check https://github.com/tgranz/SparkAlerts?tab=readme-ov-file#environment-setup for details.');
+} else if (!xmppPass) {
+    console.error('.env file is missing XMPP_PASSWORD variable.');
     process.exit(1);
 }
 
+// Load API keys from config
+let API_KEYS = [];
+if (!config.api?.disable_keys) {
+    API_KEYS = Array.isArray(config.api?.keys) ? config.api.keys : [];
+    if (!config.api?.silent_console) {
+        console.log(`Loaded ${API_KEYS.length} API key(s) from configuration.`);
+        if (config.security?.allow_no_origin) {
+            console.warn("WARNING: Requests with no origin are still allowed. API key is still required for null origins.");
+        } else {
+            console.warn("Requests with no origin are NOT allowed, even with a valid API key.");
+            if (config.security?.allowed_origins?.length < 1) {
+                console.warn("No whitelisted domains are set. Each request must have a valid API key.")
+            } else {
+                console.warn("WARNING: Requests from whitelisted domains are allowed, even without an API key!");
+            }
+        }
+    }
+} else {
+    if (!config.api?.silent_console) {
+        console.log('API key validation disabled.');
+        if (config.security?.allow_no_origin) {
+            console.warn("WARNING: Requests with no origin are still allowed. API key is still required for null origins.");
+            if (config.security?.allowed_origins?.length < 1) {
+                console.warn("WARNING: No whitelisted domains are set. Origin must be null to access API")
+            } else {
+                console.log("Requests from whitelisted domains are allowed.");
+            }
+        } else {
+            console.warn("Requests with no origin are NOT allowed.");
+            if (config.security?.allowed_origins?.length < 1) {
+                console.error("ERROR: No whitelisted domains are set. You have no way to access the API!")
+                process.exit(1);
+            } else {
+                console.log("Requests from whitelisted domains are allowed.");
+            }
+        }
+    }
+}
+
+
+// ========== SETUP ==========
+// Setup logging level
+setLogLevel(config.app?.log_level || 'WARN');
 
 // Set up the express webserver
 const app = express();
-var port = 8433;
-if (process.env.EXPRESS_PORT) {
-    var port = parseInt(process.env.EXPRESS_PORT);
-}
+var port = config.api?.port || 8080;
 
-// API keys configuration
-/*format:
+// CORS configuration
+const corsOptions = {
+    origin: function (origin, callback) {
+        // First check if the request has no origin
+        if (!origin || origin == '' || origin === 'null') {
+            nosyncLog('Request origin is NULL or empty.', "DEBUG");
+            if (config.security?.allow_no_origin) {
+                nosyncLog('Allowing no-origin request as per configuration.', "DEBUG");
+                return callback(null, true);
+            } else {
+                nosyncLog('Denying no-origin request as per configuration.', "DEBUG");
+                return callback(null, false);
+            }
+        }
+        
+        // Origin is not null or empty, check against whitelist
+        // Allow requests from whitelisted origins
+        for (const domain of config.security?.allowed_origins || []) {
+            if (origin && origin.includes(domain)) {
+                nosyncLog(`Allowing request from ${origin} as per configuration.`, "DEBUG");
+                return callback(null, true);
+            }
+        }
+        
+        // Did not match any whitelisted domains
+        // TODO: handle API key validation here
+        // Deny CORS so browsers enforce restrictions.
+        nosyncLog(`Denying CORS for non-whitelisted origin: ${origin}`, "DEBUG");
+        return callback(null, false);
+    },
 
-aaa: {
-    name: 'Development API Key',
-    rateLimit: 100, // requests per window
-    whitelist: [], // allowed IPs/domains
-    lastUsed: null,
-    active: true
-}
+    methods: ['GET', 'POST', 'OPTIONS'],
+    allowedHeaders: ['Content-Type', 'Authorization', 'X-Request-Time', 'X-Signature', 'X-Requested-With'],
+    credentials: true,
+    optionsSuccessStatus: 204
+};
 
-*/
-let API_KEYS = {};
-if (process.env.API_KEYS_JSON) {
-    try {
-        API_KEYS = JSON.parse(process.env.API_KEYS_JSON);
-        console.log(`Loaded ${Object.keys(API_KEYS).length} API key(s) from environment.`);
-    } catch (e) {
-        console.warn('API_KEYS contains invalid JSON! Error:', e.message);
-    }
-} else {
-    console.log('No API keys configured.');
-}
-
-if (!process.env.ALLOW_NO_ORIGIN && process.env.DOMAIN_WHITELIST == null) {
-    console.error('You have no API keys, no whitelisted domains, and do not allow no-origin requests. You cannot access the API!');
-}
-
-
-// Function to generate HMAC signature for request verification
-function generateSignature(apiKey, timestamp, method, path) {
-    const hmac = crypto.createHmac('sha256', apiKey);
-    const data = `${timestamp}${method}${path}`;
-    return hmac.update(data).digest('hex');
-}
-
-
-// Parse domain whitelist once at startup
-const DOMAIN_WHITELIST = process.env.DOMAIN_WHITELIST ? process.env.DOMAIN_WHITELIST.split(',').map(d => d.trim()) : [];
-if (DOMAIN_WHITELIST.length > 0) {
-    console.log(`Loaded ${DOMAIN_WHITELIST.length} whitelisted domain(s): ${DOMAIN_WHITELIST.join(', ')}`);
-}
-if (process.env.ALLOW_NO_ORIGIN === 'true') {
-    console.log('No-origin requests are allowed.');
-}
-
-// Note: CORS is intentionally not configured here. If this API is behind
-// a gateway or reverse proxy that must enforce CORS, configure it there.
-// The request validation logic still enforces API key / signature checks.
-
-
-// Rate limiter based on API key and/or IP
+// Configure rate limiting
 const apiRateLimiter = rateLimit({
-    windowMs: 15 * 60, // 15 seconds
+    windowMs: config.api?.rate_window_ms || 60000,
     max: (req) => {
         const apiKey = req.get('Authorization')?.split(' ')[1];
-        return apiKey && API_KEYS[apiKey] ? API_KEYS[apiKey].rateLimit : 30;
+        // If key validation is disabled or no API key provided, use default rate limit
+        if (config.api?.disable_keys || !apiKey) {
+            return config.api?.rate_limit || 100;
+        }
+        // If API key is provided and keys are enabled, use per-key rate limit
+        return config.api?.key_rate_limit || 1000;
     },
     keyGenerator: (req) => {
-        const apiKey = req.get('Authorization')?.split(' ')[1] || '';
+        const apiKey = req.get('Authorization')?.split(' ')[1] || req.query.apikey || '';
         return `${apiKey}_${ipKeyGenerator(req)}`;
     },
     message: { 
@@ -130,104 +174,102 @@ const apiRateLimiter = rateLimit({
     }
 });
 
-
-// Combined origin and token check middleware
+// Main validation check middleware
 const validateRequest = (req, res, next) => {
     const origin = req.get('origin') || req.get('referer') || '';
     const authHeader = req.get('Authorization');
     const timestamp = req.get('X-Request-Time');
-    const signature = req.get('X-Signature');
+
+    // First check if the request has no origin
+    if (!origin || origin == '' || origin === 'null') {
+        nosyncLog('Request origin is NULL or empty.', "DEBUG");
+        if (config.security?.allow_no_origin) {
+            nosyncLog('Allowing no-origin request as per configuration.', "DEBUG");
+            return next();
+        } else {
+            nosyncLog('Denying no-origin request as per configuration.', "DEBUG");
+            return res.status(403).json({
+                status: "ERROR",
+                message: "CORS policy: No origin not allowed"
+            });
+        }
+    }
     
-    console.log(`[${req.method}] ${req.path} - Origin: ${origin || 'none'}`);
-    
-    // Allow requests from whitelisted domains
-    for (const domain of DOMAIN_WHITELIST) {
+    // Origin is not null or empty, check against whitelist
+    // Allow requests from whitelisted origins
+    for (const domain of config.security?.allowed_origins || []) {
         if (origin && origin.includes(domain)) {
-            nosyncLog(`Authorized access from whitelisted domain: ${origin}`);
-            console.log(`✓ Whitelisted domain authorized: ${domain}`);
+            nosyncLog(`Allowing request from ${origin} as per configuration.`, "DEBUG");
             return next();
         }
     }
 
-    // Allow requests with no origin if configured
-    if (process.env.ALLOW_NO_ORIGIN === 'true') {
-        // Accept the literal 'null' value as a no-origin request as some
-        // browsers (or file:// contexts) send Origin: null.
-        if (origin == '' || origin === 'null' || !origin) {
-            nosyncLog(`Authorized access with no origin.`);
-            console.log('✓ No-origin request authorized');
-            return next();
-        }
-    }
-
-    // For non-whitelisted origins, require api key
-    if (!authHeader || !authHeader.startsWith('Bearer ')) {
-        nosyncLog(`Missing or invalid Authorization header from: ${origin}`);
-        console.log(`✗ Auth failed: Missing or invalid Authorization header`);
-        return res.status(401).json({
+    // For non-whitelisted origins, check if API keys are disabled
+    if (config.api?.disable_keys) {
+        nosyncLog(`API key validation is disabled, but origin ${origin} is not whitelisted.`, "DEBUG");
+        return res.status(403).json({
             status: "ERROR",
-            message: "Missing or invalid 'Authorization' header"
+            message: "403 Forbidden"
         });
     }
 
-    const apiKey = authHeader.split(' ')[1];
-    const keyConfig = API_KEYS[apiKey];
-    console.log(`Validating API key: ${apiKey.substring(0, 8)}...`);
-
-    // Validate API key
-    if (!keyConfig || !keyConfig.active) {
-        nosyncLog(`Invalid or inactive API key from: ${origin}`);
-        console.log(`✗ Auth failed: Invalid or inactive API key`);
+    // API keys are enabled, require authorization
+    let apiKey = null;
+    
+    // Try Authorization header first
+    if (authHeader && authHeader.startsWith('Bearer ')) {
+        apiKey = authHeader.split(' ')[1];
+    } else if (req.query.apikey) {
+        // Fall back to URL query parameter
+        apiKey = req.query.apikey;
+    }
+    
+    if (!apiKey) {
+        nosyncLog(`Missing or invalid Authorization header/apikey from origin: ${origin}`, "DEBUG");
         return res.status(401).json({
             status: "ERROR",
-            message: "Invalid or inactive API key"
+            message: "Missing or invalid 'Authorization' header or 'apikey' query parameter"
+        });
+    }
+    
+    nosyncLog(`Validating API key: ${apiKey.substring(0, 4)}...`, "DEBUG");
+
+    // Check if API key is in the list
+    if (!API_KEYS.includes(apiKey)) {
+        nosyncLog(`Invalid API key from: ${origin}`, "DEBUG");
+        return res.status(401).json({
+            status: "ERROR",
+            message: "Invalid API key"
         });
     }
 
     // Validate timestamp (within 5 minutes)
     if (!timestamp || Math.abs(Date.now() - parseInt(timestamp)) > 300000) {
-        nosyncLog(`Invalid or expired timestamp from: ${origin}`);
-        console.log(`✗ Auth failed: Invalid or expired timestamp`);
+        nosyncLog(`Invalid or expired timestamp from: ${origin}`, "DEBUG");
         return res.status(401).json({
             status: "ERROR",
             message: "Request timestamp invalid or expired"
         });
     }
-
-    // Validate signature
-    const expectedSignature = generateSignature(apiKey, timestamp, req.method, req.path);
-    if (!signature || signature !== expectedSignature) {
-        nosyncLog(`Invalid signature from: ${origin}`);
-        console.log(`✗ Auth failed: Invalid signature`);
-        return res.status(401).json({
-            status: "ERROR",
-            message: "Invalid request signature"
-        });
-    }
-
-    // Update key usage metadata
-    keyConfig.lastUsed = Date.now();
     
     // Request is authenticated
-    nosyncLog(`Authorized access with valid API key from: ${origin}`);
-    console.log(`✓ API key authorized: ${keyConfig.name || 'Unnamed key'}`);
+    nosyncLog(`Authorized access with valid API key from: ${origin}`, "DEBUG");
     next();
 };
 
-
-// Apply middleware
+// Apply middleware in order
 app.use(express.json());
-// CORS middleware removed — CORS should be handled by the gateway/reverse proxy
+app.use(cors(corsOptions));
 app.use(apiRateLimiter)
 
 
-// Ping endpoint - for uptime monitoring (no auth)
+// ========== ENDPOINTS ==========
+// Ping endpoint - for uptime monitoring
 app.get('/ping', (req, res) => {
     res.status(200).send({ status: "OK" });
 });
 
-// Apply validateRequest only to protected routes
-// Home route - for authorization testing
+// Home route - for authorization testing or a homepage
 app.get('/', validateRequest, (req, res) => {
     res.status(200).send({ status: "AUTHORIZED" });
 });
@@ -245,7 +287,6 @@ app.get('/alerts', validateRequest, async (req, res) => {
             alerts = [];
         }
 
-        console.log(`Responding with ${alerts.length} alert(s)`);
         res.status(200).send({ 
             status: "OK",
             count: alerts.length,
@@ -253,12 +294,11 @@ app.get('/alerts', validateRequest, async (req, res) => {
         });
 
     } catch (err) {
-        console.error('Error handling alerts request:', err);
-        nosyncLog(`Error serving alerts: ${err.message}`);
+        if (!config.app.silent_console) console.warn('Error handling alerts request:', err);
+        nosyncLog(`Error serving alerts: ${err.message}`, "ERROR");
         res.status(500).send({ 
             status: "ERROR", 
-            message: "Internal server error while retrieving alerts.",
-            extra_info: err.message.toString() 
+            message: "Internal server error while retrieving alerts."
         });
     }
 });
@@ -267,34 +307,32 @@ app.get('/alerts', validateRequest, async (req, res) => {
 app.use((req, res, next) => {
     res.status(404).send({ 
         status: "ERROR", 
-        message: "Not found" 
+        message: "Route not found" 
     });
 });
 
-// Other internal error handler
+
+// ========== START SERVER ===========
+// Express error handling
 app.use((err, req, res, next) => {
     console.error('Unhandled error:', err);
-    nosyncLog(`Unhandled error: ${err.message}`);
+    nosyncLog(`Unhandled error: ${err.message}`, "ERROR");
     res.status(500).send({ 
         status: "ERROR", 
-        message: "Internal server error",
-        extra_info: err.message.toString()
+        message: "Internal server error"
     });
 });
-
 
 // Start the server
 app.listen(port, () => {
-    console.log(`API is now running at http://localhost:${port}`);
-    nosyncLog(`API is now running at http://localhost:${port}`);
+    if (!config.app.silent_console) console.log(`API is now accessible at http://localhost:${port}`);
+    nosyncLog(`API (re)started, accessible at http://localhost:${port}`, "INFO");
 });
 
-// Start the NWWS-OI XMPP client
+// Authenticate and start the NWWS-OI XMPP client
 nwwsoi.auth(
-    process.env.XMPP_USERNAME,
-    process.env.XMPP_PASSWORD,
-    process.env.XMPP_RESOURCE,
-    process.env.MAX_RECONNECT_ATTEMPTS,
-    process.env.INITIAL_RECONNECT_DELAY
+    xmppUser,
+    xmppPass,
+    config
 );
 nwwsoi.start();

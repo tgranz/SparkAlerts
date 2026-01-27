@@ -7,90 +7,84 @@ such that the server can be restarted without losing data.
 
 It also performs periodic cleanup of expired alerts from the database.
 
+Alerts issued while the script is offline will not be captured.
 */
 
 
+// ========== IMPORTS AND INITIALIZATION ==========
 // Imports
 const fs = require('fs');
-const { nosyncLog } = require('./logging.js').nosyncLog;
+const { nosyncLog, log } = require('./logging.js');
 const xml2js = require('xml2js');
 const path = require('path');
-const { log } = require('./logging.js');
-const { sign } = require('crypto');
 
-// For storing crexentials
-var username = null;
-var password = null;
-var resource = null;
-var MAX_RECONNECT_ATTEMPTS = 10;
-var INITIAL_RECONNECT_DELAY = 2000;
+// Variables storing credentials and configuration
+var username;
+var password;
+var resource;
+var config;
+var reconnectAttempt = 0;
+var RECONNECT_DELAY = 2000;
 
+
+// ========== MAIN LOGIC ==========
+// Scope to allow use of async/await at top level
 (async () => {
-    // Polyfill WebSocket for @xmpp/client
+    // Setup XMPP client websocket
     const { client, xml } = await import('@xmpp/client');
     const wsModule = await import('ws');
     global.WebSocket = wsModule.default || wsModule.WebSocket || wsModule;
 
-    // Variable to store the interval ID so we can stop it if needed
-    let deleteExpiredAlertsInterval = null;
-
     // Task to clean up the alerts.json file
+    let deleteExpiredAlertsInterval = null;
     async function deleteExpiredAlerts() {
-        console.log('Running expired alerts cleanup...');
+        nosyncLog('Running expired alerts cleanup task.', 'DEBUG');
         try {
             let alerts = [];
 
             try {
+                // Read in existing alerts
                 const raw = fs.readFileSync('alerts.json', 'utf8');
                 alerts = raw.trim() ? JSON.parse(raw) : [];
                 if (!Array.isArray(alerts)) alerts = [];
             } catch (readErr) {
-                if (readErr.code !== 'ENOENT') {
-                    console.warn('alerts.json unreadable during cleanup:', readErr.message);
-                    log('alerts.json unreadable during cleanup: ' + readErr.message);
-                }
-                return; // Nothing to clean
+                console.error('Could not read alerts file during cleanup: ' + readErr.message);
+                nosyncLog('Could not read alerts file during cleanup: ' + readErr.message, 'ERROR');
+                return;
             }
 
             // Filter out expired alerts (iterate backwards to avoid issues)
             const now = new Date();
             const initialCount = alerts.length;
             alerts = alerts.filter(alert => {
-                if (!alert.expiry) return true; // Keep alerts without expiry
-                const expiry = new Date(alert.expiry);
-                return now <= expiry; // Keep only non-expired alerts
+                // If alert has no expiry, keep it indefinitely
+                if (!alert.expiry) return true;
+                // Keep alerts that have not yet expired
+                return now <= new Date(alert.expiry);
             });
-
             const removedCount = initialCount - alerts.length;
 
-            // Write back only if something was removed
+            // Write back updated alerts if any were removed
             if (removedCount > 0) {
                 fs.writeFileSync('alerts.json', JSON.stringify(alerts, null, 2));
-                console.log(`Expired alerts cleanup: removed ${removedCount} alert(s).`);
-                log(`Expired alerts cleanup: removed ${removedCount} alert(s).`);
+                nosyncLog(`Expired alerts cleanup ran successfully. (Removed ${removedCount} expired alert(s)).`, 'DEBUG');
             } else {
-                console.log('Expired alerts cleanup: no expired alerts found.');
+                nosyncLog('Expired alerts cleanup ran successfully (no expired alerts found).', 'DEBUG');
             }
         } catch (err) {
-            log('Error in database cleanup: ' + err);
-            console.error('Error in database cleanup:', err);
+            nosyncLog(`Expired alerts cleanup exited with an error: ${err.message}`, 'ERROR');
+            console.error('Error in alert database cleanup:', err);
         }
     }
 
-    // Run the deleteExpiredAlerts task every minute
+    // Enable running the cleanup task every minute
     if (!deleteExpiredAlertsInterval) {
         deleteExpiredAlerts();
         deleteExpiredAlertsInterval = setInterval(deleteExpiredAlerts, 60 * 1000);
     }
 
-    // Connection management
-    let reconnectAttempt = 0;
-    const MAX_RECONNECT_ATTEMPTS = 10;
-    const RECONNECT_DELAY = 2000; // 2 seconds
-
     // Function to create XMPP client object
     function createXMPPClient() {
-        console.log('Creating XMPP client...');
         // Read XMPP configuration from environment variables to avoid hard-coding credentials.
         const xmppConfig = {
             service: 'xmpp://nwws-oi.weather.gov',
@@ -100,48 +94,54 @@ var INITIAL_RECONNECT_DELAY = 2000;
             resource: resource
         };
 
+        // Verify credentials are provided
         if (!xmppConfig.username || !xmppConfig.password) {
-            console.warn('No credentials found in .env file! Did you set XMPP_USERNAME and XMPP_PASSWORD variables?');
+            nosyncLog('No credentials were passed to the NWWSOI module.', 'ERROR');
+            console.error('No credentials were passed to the NWWSOI module. This is either an issue with the code or the XMPP server.');
             process.exit(1);
         }
         
-        console.log(`Connecting as ${xmppConfig.username} with resource: ${xmppConfig.resource}`);
-
+        // Start XMPP client
+        if (!config.app?.silent_console) console.log('Creating XMPP client for NWWS-OI...');
         const xmpp = client(xmppConfig);
 
         // Handle disconnections
         xmpp.on('disconnect', () => {
-            log('XMPP client disconnected. Reconnecting...');
+            nosyncLog('XMPP client disconnected. Attempting to reconnect...');
+            if (!config.app?.silent_console) console.log('XMPP connection closed. Attempting to reconnect...');
             handleReconnect();
         });
 
-        // Handle connection closed
+        // Handle closed connections
         xmpp.on('close', () => {
-            log('XMPP connection closed. Reconnecting...');
+            nosyncLog('XMPP connection closed. Attempting to reconnect...');
+            if (!config.app?.silent_console) console.log('XMPP connection closed. Attempting to reconnect...');
             handleReconnect();
         });
 
+        // Return the configured XMPP client
         return xmpp;
     }
 
+    // Function to handle reconnections with exponential backoff
     async function handleReconnect() {
-        console.log('Handling reconnection...');
         // Clear any existing intervals
         if (deleteExpiredAlertsInterval) {
             clearInterval(deleteExpiredAlertsInterval);
             deleteExpiredAlertsInterval = null;
-            console.log('Cleared existing cleanup interval');
         }
 
-        if (reconnectAttempt >= MAX_RECONNECT_ATTEMPTS) {
-            log('Max reconnection attempts reached. Check network connection and credentials, or increase MAX_RECONNECT_ATTEMPTS.');
-            console.error('FATAL: Max reconnection attempts reached!');
+
+        if (reconnectAttempt >= config.nwws?.max_reconnect_attempts || 10) {
+            nosyncLog('Max reconnection attempts reached. Check network connection and credentials, or increase max_reconnect_attempts. The process will exit now.', 'ERROR');
+            console.error('Max reconnection attempts reached! Could not reestablish connection to XMPP server. Check network connection and credentials, or increase max_reconnect_attempts.');
             process.exit(1);
         }
 
-        // Exponential backoff with jitter
+        // Exponential backoff with jitter to avoid thundering herd
         const delay = RECONNECT_DELAY * Math.pow(2, reconnectAttempt) + Math.random() * 1000;
-        log(`Attempting reconnection in ${Math.round(delay / 1000)} seconds (attempt ${reconnectAttempt + 1}/${MAX_RECONNECT_ATTEMPTS})...`);
+        nosyncLog(`Attempting reconnection in ${Math.round(delay / 1000)} seconds (attempt ${reconnectAttempt + 1}/${config.nwws?.max_reconnect_attempts || 10})...`);
+        if (!config.app?.silent_console) console.log(`Reconnecting in ${Math.round(delay / 1000)} seconds (attempt ${reconnectAttempt + 1}/${config.nwws?.max_reconnect_attempts || 10})...`);
         await new Promise(resolve => setTimeout(resolve, delay));
 
         // Increment attempt counter
@@ -151,19 +151,22 @@ var INITIAL_RECONNECT_DELAY = 2000;
             // Attempt to create and start a new XMPP client
             xmpp = createXMPPClient();
             await xmpp.start();
-            console.log('Reconnection successful!');
+            if (!config.app?.silent_console) console.log('Reconnection success.');
         } catch (err) {
             // If restart fails, log and try again
-            log(`Reconnection attempt failed: ${err.message}`);
-            console.error(`Reconnection attempt ${reconnectAttempt} failed:`, err.message);
+            nosyncLog(`Reconnection attempt failed: ${err.message}`, 'WARN');
+            console.warn(`Reconnection attempt ${reconnectAttempt} failed:`, err.message);
             handleReconnect();
         }
     }
 
 
 
+    
+
     // Create initial XMPP client
     var xmpp = createXMPPClient();
+
 
     // Event listener for online event
     xmpp.on('online', (address) => {
@@ -171,82 +174,75 @@ var INITIAL_RECONNECT_DELAY = 2000;
         reconnectAttempt = 0;
 
         // Log connection
-        log(`Connected to XMPP server as ${address}`);
-        console.log('Connected to XMPP server successfully.');
+        nosyncLog(`Connected to XMPP chatroom as ${address}`, 'INFO');
+        if (!config.app?.silent_console) console.log('Connected to XMPP chatroom successfully.');
 
-        // Join the NWWS chat room
+        // Try to join the NWWS chat room
         try {
-            xmpp.send(
-                xml('presence', { to: 'nwws@conference.nwws-oi.weather.gov/SparkRadar' })
-            );
+            xmpp.send( xml('presence', { to: `nwws@conference.nwws-oi.weather.gov/${config.nwws?.nickname || 'SparkAlerts NWWS Ingest'}` }) );
         } catch (err) {
             // If there is an error joining, log and try again
-            log(`Error joining NWWS room: ${err.message}`);
+            nosyncLog(`Error joining NWWS room: ${err.message}`, 'ERROR');
+            console.error('Error joining NWWS chat room:', err);
             handleReconnect();
         }
     });
 
+
     // Event listener for incoming stanzas (messages)
     xmpp.on('stanza', (stanza) => {
+        // Ignore non-message stanzas (specifically, presence notifications and warning stanzas)
+        if (!stanza.is('message') || stanza.toString().includes("**WARNING**WARNING**WARNING**WARNING")) {
+            if (!config.app?.silent_console) console.log("Ignoring non-message stanza.");
+            return;
+        }
 
-
-        // Ignore non-message stanzas (specifically presence notifications)
-        if (!stanza.is('message')) { console.log("Ignoring non-message stanza."); return; }
-
-        // The chat room sends this warning when a user joins, safely ignore it
-        if (stanza.toString().includes("**WARNING**WARNING**WARNING**WARNING")) { console.log("Ignoring non-message stanza."); return; }
-
-        // Turn the XML to JSON because I hate XML
+        // Convert the XML stanzas into JSON because I hate XML
         var xml = stanza.toString();
         var parser = new xml2js.Parser();
 
-        // Message processing
+        // Alert message processing
         parser.parseString(xml, (err, result) => {
-
-
-            // If there is any error parsing, log and ignore
+            // If there is any error parsing, log and continue
             if (err) {
-                log('Error parsing XML message:', err);
-                console.error('Error parsing XML, message will not be processed:', err);
+                nosyncLog(`Error parsing XML message: ${err.message}`, 'ERROR');
+                console.warn('Error parsing XML, message will not be processed:', err);
                 return;
             } else if (!result || !result.message || !result.message.body || !Array.isArray(result.message.body)) {
-                console.error('Invalid XML message structure:', result);
-                log('Invalid XML message structure, message will not be processed. See console output for details.');
+                console.warn('Invalid XML message structure:', result);
+                nosyncLog('Invalid XML message structure, message will not be processed. See console output for details.', 'ERROR');
                 return;
             }
 
             // Extract the message body
             var body = result.message.body[0];
+
+            // Verify body is not empty
             if (body === undefined || body === null) {
-                console.error('Message body is empty, ignoring.');
-                log('XML message body is empty, ignoring.');
+                console.warn('Message body is empty, ignoring.');
+                nosyncLog('XML message body is empty, ignoring.', 'WARN');
                 return;
             }
 
-            // Extract raw text content
+            // Extract raw text content from the message
             var rawText = result.message.x[0]._;
 
-            // ================================================================================
-            // VTEC parser
-            // https://www.weather.gov/bmx/vtec
-
+            // VTEC parser. VTEC help: https://www.weather.gov/bmx/vtec
             try {
                 // Try to find VTEC in raw text first
                 var vtec = rawText.match(/\/O\..*?\/\n?/);
-                
-                /*<parameter>
-                    <valueName>VTEC</valueName>
-                    <value>/O.NEW.KDLH.SC.Y.0147.251220T0000Z-251220T1200Z/</value>
-                </parameter>*/
 
+                // Cannot find VTEC in raw text, try in XML parameters
                 if (!vtec) {
                     vtec = rawText.match(/<parameter>\s*<valueName>VTEC<\/valueName>\s*<value>(.*?)<\/value>\s*<\/parameter>/);
                     if (vtec && vtec[1]) vtec = vtec[1];
                 }
                 
+                // Cannot find VTEC in XML parameters. No VTEC, not an alert, or invalid message.
                 if (!vtec) throw new Error('No VTEC found');
                 
-                vtecObjects = (typeof vtec === 'string' ? vtec : vtec[0]).split('.');
+                // Split VTEC string into components
+                var vtecObjects = (typeof vtec === 'string' ? vtec : vtec[0]).split('.');
 
                 // Function to convert VTEC time to ISO UTC timestamp
                 function vtecToIso(ts) {
@@ -273,65 +269,42 @@ var INITIAL_RECONNECT_DELAY = 2000;
                     endTime: vtecToIso(vtecObjects[6].split('-')[1])
                 }
             } catch (err) {
-                // No VTEC, this is not an alert
+                // No VTEC, or an error parsing VTEC
+                nosyncLog(`Could not parse VTEC: ${err.message}, ignoring.`, 'DEBUG');
+                if(!config.app?.silent_console) console.debug(`Could not parse VTEC: ${err.message}, ignoring.`);
                 return;
             }
 
-            var acceptPhenomena = [
-                'TO', // Tornado
-                'SV', // Severe Thunderstorm
-                'FF', // Flash Flood
-                'MA', // Marine
-                'AF', // Air Quality
-                'HU', // Hurricane
-                'TR', // Tropical Storm
-                'TY', // Typhoon
-                'FL', // Flood
-                'SQ', // Snow Squall
-                'LW', // Lake Wind
-                'UP', // Heavy Freezing Spray
-                'ZR', // Freezing Rain
-                'WS', // Winter Storm
-                'IS', // Ice Storm
-                'LE', // Lakeshore Flood
-                'WW', // Winter Weather
-                'CF'  // Coastal Flood
-            ]
+            // Whitelist filtering to only accept certain alert types
+            var acceptPhenomena = config.nwws?.products || ['TO', 'SV'];
 
-            // Just these for now
-
-            acceptPhenomena = [
-                'TO', // Tornado
-                'SV', // Severe Thunderstorm
-            ]
-
+            // Check if the alert's phenomena code is whitelisted
             if (!acceptPhenomena.includes(thisObject.phenomena)) {
-                // Not an alert type we care about
-                console.log('Ignoring alert with phenomena code:', thisObject.phenomena);
-                return;
-            } else if (!thisObject.significance.includes('W')) {
-                console.log("Ignoring alert with significance code:", thisObject.significance);
+                if (!config.app?.silent_console) console.log('Ignoring non-whitelisted alert with phenomena code:', thisObject.phenomena);
+                nosyncLog('Ignoring non-whitelisted alert with phenomena code: ' + thisObject.phenomena, 'DEBUG');
                 return;
             }
 
-            // ================================================================================
+            if (thisObject.product !== '/O') {
+                if (!config.app?.silent_console) console.log('Ignoring non-operational product type:', thisObject.product);
+                nosyncLog('Ignoring non-operational product type: ' + thisObject.product, 'DEBUG');
+                return;
+            }
 
+            // Check what type of alert this is
             if (thisObject.actions === 'CAN' || thisObject.actions === 'EXP') {
                 // This is a cancellation or expiration, delete the alert from the database
                 try {
                     let alerts = [];
-
                     try {
+                        // Read in existing alerts
                         const raw = fs.readFileSync('alerts.json', 'utf8');
                         alerts = raw.trim() ? JSON.parse(raw) : [];
                         if (!Array.isArray(alerts)) alerts = [];
                     } catch (readErr) {
-                        // If the file is missing or malformed, nothing to delete
-                        if (readErr.code !== 'ENOENT') {
-                            console.warn('alerts.json unreadable, cannot delete alert:', readErr.message);
-                            log('alerts.json unreadable, cannot delete alert: ' + readErr.message);
-                        }
-                        alerts = [];
+                        console.error('Could not read alerts file during cancel/expire: ' + readErr.message);
+                        nosyncLog('Could not read alerts file during cancel/expire: ' + readErr.message, 'ERROR');
+                        return;
                     }
 
                     // Find and remove matching alert
@@ -347,57 +320,68 @@ var INITIAL_RECONNECT_DELAY = 2000;
                     if (alertIndex !== -1) {
                         const removedAlert = alerts.splice(alertIndex, 1)[0];
                         fs.writeFileSync('alerts.json', JSON.stringify(alerts, null, 2));
-                        console.log('Alert cancelled/expired and removed:', removedAlert.name);
-                        log('Alert cancelled/expired and removed: ' + removedAlert.name);
+                        if (!config.app?.silent_console) console.log('Alert cancelled/expired and removed:', removedAlert.name);
+                        nosyncLog(`${removedAlert.name} cancelled/expired and removed: `, 'INFO');
                     } else {
-                        console.log('No matching alert found to cancel/expire.');
-                        log('No matching alert found to cancel/expire.');
+                        if (!config.app?.silent_console) console.warn('No matching alert found to cancel/expire.');
+                        nosyncLog('No matching alert found to cancel/expire.', 'WARN');
                     }
                 } catch (err) {
-                    console.error('Error updating alerts.json for cancellation/expiration:', err);
-                    log('Error updating alerts.json for cancellation/expiration: ' + err);
+                    if (!config.app?.silent_console) console.error('Error updating alerts.json for cancellation/expiration:', err);
+                    nosyncLog('Error updating alerts.json for cancellation/expiration: ' + err, 'ERROR');
                 }
                 return;
-            } else if (thisObject.actions !== 'UPG' && thisObject.actions !== 'COR' && thisObject.actions !== 'CON') {
-                // Not update, correction, or continuation
-                console.log(`Alert action type '${thisObject.actions}' - processing as new alert`);
-                // Continue to process as new alert
-            } else {
+            } else if (thisObject.actions == 'UPG' ||
+                thisObject.actions == 'COR' ||
+                thisObject.actions == 'CON' ||
+                thisObject.actions == 'EXT' ||
+                thisObject.actions == 'EXA' ||
+                thisObject.actions == 'EXB') {
                 // Update, correction, or continuation
-                console.log(`Alert action '${thisObject.actions}' detected - update/correction/continuation`);
                 // TODO: Implement update/correction logic
+                console.log(`Alert action '${thisObject.actions}' detected - update/correction/continuation.`);
                 // Preserve coordinates and other data not included with update.
+                return;
+            } else if (thisObject.actions == 'NEW') {
+                // New alert, continue processing
+                console.log(`Alert action '${thisObject.actions}' detected - new alert.`);
+            } else{
+                // Unknown action code
+                if (!config.app?.silent_console) console.log('Ignoring alert with unknown action code:', thisObject.actions);
+                nosyncLog('Ignoring alert with unknown action code: ' + thisObject.actions, 'DEBUG');
+                return;
             }
 
-            // Extract alert name
+
+            // Attempt to extract alert name
             var alertNameMatch = rawText.match(/BULLETIN.*?\s+(.*?)\s+National Weather Service/);
             var alertName = alertNameMatch ? alertNameMatch[1].trim() : null;
 
+            // Alert name not found in message body, try XML parameter
             if (!alertName) {
-                // Different format: <event>Snow Squall Warning</event>
                 alertNameMatch = rawText.match(/<event>(.*?)<\/event>/);
-                alertName = alertNameMatch ? alertNameMatch[1].trim() : 'Unknown Alert';
+                alertName = alertNameMatch ? alertNameMatch[1].trim() : null;
             }
-            
-            console.log(`Processing alert: ${alertName}`);
-            
-            // Extract recieved time
-            var recievedTime = null;
+
+            // Could not extract alert name
+            if (!alertName) alertName = null;
+                        
+
+            // Attempt to extract received time
+            var receivedTime = null;
             try {
-                // Try to extract from the result object
                 if (result.message.x && result.message.x[0] && result.message.x[0].$ && result.message.x[0].$.issued) {
-                    recievedTime = result.message.x[0].$.issued;
-                    console.log(`Received time: ${recievedTime}`);
+                    receivedTime = result.message.x[0].$.issued;
                 }
             } catch (err) {
                 console.log('Could not extract received time');
             }
 
-            // Extract lat/lon
+
+            // Attempt to extract lat/lon
             var latLonMatch = rawText.match(/LAT\.\.\.LON\s+([\d\s]+)/);
             let coordinates = [];
             var standardCoordinates = [];
-
             if (latLonMatch) {
                 var nums = latLonMatch[1].trim().split(/\s+/);
                 console.log(`Extracted ${nums.length / 2} coordinate pairs`);
@@ -407,16 +391,13 @@ var INITIAL_RECONNECT_DELAY = 2000;
                         lon: -parseFloat(nums[i + 1].slice(0, 2) + '.' + nums[i + 1].slice(2)) // Assuming western hemisphere
                     });
                 }
-
                 // Standardize coordinates to [[lat, lon], ...]
                 if (Array.isArray(coordinates)) {
                     standardCoordinates = coordinates
                         .map(item => {
-                            // handle already-array form [lat, lon]
                             if (Array.isArray(item) && item.length >= 2) {
                                 return [Number(item[0]), Number(item[1])];
                             }
-                            // handle object form {lat, lon}
                             if (item && typeof item === 'object' && 'lat' in item && 'lon' in item) {
                                 return [Number(item.lat), Number(item.lon)];
                             }
@@ -424,44 +405,43 @@ var INITIAL_RECONNECT_DELAY = 2000;
                         })
                         .filter(pair => pair && isFinite(pair[0]) && isFinite(pair[1]));
                 }
-
                 // Replace original coordinates with standardized form
                 coordinates = standardCoordinates;
             } else {
                 // No coordinates found
-                console.log('No coordinates found in alert, skipping');
+                console.log('No coordinates found in alert, skipping...');
+                nosyncLog('No coordinates found in alert, skipping...', 'DEBUG');
                 return;
             }
 
             // Verify we have valid coordinates after processing
             if (!coordinates || coordinates.length === 0) {
-                console.log('No valid coordinates after processing, skipping alert');
+                console.log('No valid coordinates after processing, skipping...');
+                nosyncLog('No valid coordinates after processing, skipping...', 'DEBUG');
                 return;
             }
 
-            // Simple message beautification
+
+            // Message beautification
             // TODO: filter and parse messages with description and instruction tags
             var message = rawText.replace(/\n\n/g, '\n').replace(/\n/g, ' ');
-
             var idString = thisObject.product_type + thisObject.office + (Math.random() * 1000000).toFixed(0);
-
             var headline = null;
-            try {
-                headline = rawText.split('\n')[0].replace('BULLETIN - ', '').trim();
-            } catch {}
+            try { headline = rawText.split('\n')[0].replace('BULLETIN - ', '').trim(); } catch {}
 
-            // Output parsed result
+
+            // Format parsed result
             var parsedAlert = {
-                name: alertName,
-                id: idString,
-                coordinates: coordinates,
-                sender: thisObject.office,
-                headline: headline,
-                issued: thisObject.startTime,
-                expiry: thisObject.endTime,
-                message: message,
+                name: alertName || null,
+                id: idString || null,
+                coordinates: coordinates || [],
+                sender: thisObject.office || null,
+                headline: headline || null,
+                issued: thisObject.startTime || null,
+                expiry: thisObject.endTime || null,
+                message: message || null,
                 properties: {
-                    recievedTime: recievedTime,
+                    receivedTime: receivedTime,
                     vtec: thisObject,
                     product_type: thisObject.phenomena + thisObject.significance,
                     phenomena: thisObject.phenomena,
@@ -470,11 +450,11 @@ var INITIAL_RECONNECT_DELAY = 2000;
                 }
             };
 
-            // Append the alert to alerts.json (tolerate empty/invalid file)
+            // Append the alert to alerts.json
             try {
                 let alerts = [];
-
                 try {
+                    // Read in existing alerts
                     const raw = fs.readFileSync('alerts.json', 'utf8');
                     alerts = raw.trim() ? JSON.parse(raw) : [];
                     if (!Array.isArray(alerts)) alerts = [];
@@ -482,52 +462,58 @@ var INITIAL_RECONNECT_DELAY = 2000;
                     // If the file is missing or malformed, start fresh
                     if (readErr.code !== 'ENOENT') {
                         console.warn('alerts.json unreadable, recreating file:', readErr.message);
-                        log('alerts.json unreadable, recreating file: ' + readErr.message);
+                        nosyncLog('alerts.json unreadable, recreating file: ' + readErr.message, 'WARN');
                     }
                     alerts = [];
                 }
 
+                // Push the new alert
                 alerts.push(parsedAlert);
+
+                // Write back updated alerts
                 fs.writeFileSync('alerts.json', JSON.stringify(alerts, null, 2));
-                console.log(`✓ Alert stored successfully: ${parsedAlert.name} (ID: ${parsedAlert.id})`);
-                log('Alert stored successfully: ' + parsedAlert.name);
+
+                nosyncLog('Alert stored successfully: ' + parsedAlert.name, 'INFO');
             } catch (err) {
-                console.error('Error updating alerts.json:', err);
-                log('Error updating alerts.json:', err);
+                if (!config.app?.silent_console) console.error('Error updating alerts.json for cancellation/expiration:', err);
+                nosyncLog('Error updating alerts.json for cancellation/expiration: ' + err, 'ERROR');
             }
         });
 
     });
 
-    // Event listener for errors
-    xmpp.on('error', (err) => {
-        console.error('XMPP error:', err);
-        log('XMPP error: ' + err.toString());
-        
+    // Event listener to catch errors
+    xmpp.on('error', (err) => {        
         // Handle DNS/network errors with reconnection
         if (err.errno === -3001 || err.code === 'EAI_AGAIN' || err.code === 'ENOTFOUND' || err.code === 'ETIMEDOUT') {
-            console.log('Network error detected, attempting reconnection...');
-            log('Network error detected: ' + err.code + ' - Initiating reconnection.');
+            if (!config.app?.silent_console) console.warn('Network error detected, attempting reconnection...');
+            nosyncLog('Network error detected: ' + err.code + ' - Initiating reconnection.', 'WARN');
             handleReconnect();
+            if (deleteExpiredAlertsInterval) {
+                clearInterval(deleteExpiredAlertsInterval);
+                deleteExpiredAlertsInterval = null;
+            }
             return;
+        } else {
+            if (!config.app?.silent_console) console.error('XMPP reported unknown error:', err);
+            nosyncLog('XMPP reported unknown error: ' + err.toString(), 'ERROR');
         }
-        
-        // Clean up interval on error
+    });
+
+    // Event listener for offline event
+    xmpp.on('offline', () => {
+        nosyncLog("Connection offline.", 'WARN');
+        if (!config.app?.silent_console) console.warn('XMPP connection offline.');
         if (deleteExpiredAlertsInterval) {
             clearInterval(deleteExpiredAlertsInterval);
             deleteExpiredAlertsInterval = null;
         }
     });
 
-    // Clean up interval when offline
-    xmpp.on('offline', () => {
-        log("Connection offline")
-        console.log('XMPP connection offline');
-        if (deleteExpiredAlertsInterval) {
-            clearInterval(deleteExpiredAlertsInterval);
-            deleteExpiredAlertsInterval = null;
-        }
-    });
+
+
+
+
 
     // Start the connection
     try {
@@ -536,41 +522,39 @@ var INITIAL_RECONNECT_DELAY = 2000;
         // Handle authentication errors
         if (err.toString().includes('not-authorized')) {
             console.error('XMPP Authentication failed: Check your username and password in the .env file.');
-            log('XMPP Authentication failed: Check your username and password.');
+            nosyncLog('XMPP Authentication failed: Check your username and password.', 'ERROR');
             process.exit(1);
         }
         
         // Handle DNS/network errors with reconnection
         if (err.errno === -3001 || err.code === 'EAI_AGAIN' || err.code === 'ENOTFOUND' || err.code === 'ETIMEDOUT') {
             console.error('Network/DNS error connecting to XMPP server:', err.message);
-            log('Network/DNS error: ' + err.message + ' - Will retry connection.');
+            nosyncLog('Network/DNS error: ' + err.message, 'ERROR');
             handleReconnect();
             return;
         }
         
+        // Unknown error
         console.error('\nFailed to start XMPP client:', err);
-        log('Failed to start XMPP client: ' + err);
+        nosyncLog('Failed to start XMPP client: ' + err, 'ERROR');
         process.exit(1);
     }
 
 })().catch(err => {
-    console.error('\nAn error occurred:', err);
-    log('An error occurred: ' + err);
+    console.error('\nAn unhandled error occurred:', err);
+    nosyncLog('An unhandled error occurred: ' + err + ', restarting in 5 sec...', 'ERROR');
     console.log('Restarting in 5 seconds...');
     setTimeout(() => { }, 5000);
 });
 
+
 // Exports
 module.exports = {
-    start: async () => { 
-        console.log('NWWS-OI module start() called');
-    },
-    auth: (a, b, c, d, e) => {
-        username = a;
-        password = b; 
-        resource = c || 'SparkAlerts NWWS Ingest Client';
-        MAX_RECONNECT_ATTEMPTS = d || 10;
-        INITIAL_RECONNECT_DELAY = e || 2000;
-        console.log(`NWWS-OI configured: User=${username}, Resource=${resource}, MaxRetries=${MAX_RECONNECT_ATTEMPTS}`);
+    start: async () => {},
+    auth: (user, pass, conf) => {
+        username = user;
+        password = pass; 
+        resource = conf?.nwws?.nickname || 'SparkAlerts NWWS Ingest Client';
+        config = conf || {};
     }
 };
