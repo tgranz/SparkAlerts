@@ -409,16 +409,20 @@ var RECONNECT_DELAY = 2000;
                 coordinates = standardCoordinates;
             } else {
                 // No coordinates found
-                console.log('No coordinates found in alert, skipping...');
-                nosyncLog('No coordinates found in alert, skipping...', 'DEBUG');
-                return;
+                if (config.nwws.require_coordinates) {
+                    console.log('No coordinates found in alert, skipping...');
+                    nosyncLog('No coordinates found in alert, skipping...', 'DEBUG');
+                    return;
+                }
             }
 
             // Verify we have valid coordinates after processing
             if (!coordinates || coordinates.length === 0) {
-                console.log('No valid coordinates after processing, skipping...');
-                nosyncLog('No valid coordinates after processing, skipping...', 'DEBUG');
-                return;
+                if (config.nwws.require_coordinates) {
+                    console.log('No valid coordinates after processing, skipping...');
+                    nosyncLog('No valid coordinates after processing, skipping...', 'DEBUG');
+                    return;
+                }
             }
 
 
