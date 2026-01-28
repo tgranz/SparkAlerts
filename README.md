@@ -103,7 +103,10 @@ Fill out your `config.json` file in the same directory as `index.js`. You may ch
         "products": [
             "TO",
             "SV",
-        ]
+        ],
+        // Whether or not to require coordinates in an alert for
+        // the alert to be processed
+        "require_coordinates": true
     },
     "app": {
         // Sets the logging level in the service.log file. Can be 
