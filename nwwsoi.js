@@ -340,8 +340,79 @@ var RECONNECT_DELAY = 2000;
                 // Update, correction, or continuation
                 // TODO: Implement update/correction logic
                 console.log(`Alert action '${thisObject.actions}' detected - update/correction/continuation.`);
-                // Preserve coordinates and other data not included with update.
-                return;
+                
+                // Find a matching alert to update
+                // Attempt to extract alert name
+                var alertNameMatch = rawText.match(/BULLETIN.*?\s+(.*?)\s+National Weather Service/);
+                var alertName = alertNameMatch ? alertNameMatch[1].trim() : null;
+
+                // Alert name not found in message body, try XML parameter
+                if (!alertName) {
+                    alertNameMatch = rawText.match(/<event>(.*?)<\/event>/);
+                    alertName = alertNameMatch ? alertNameMatch[1].trim() : null;
+                }
+
+                // Could not extract alert name
+                if (!alertName) alertName = null;
+                            
+
+                // Attempt to extract received time
+                var receivedTime = null;
+                try {
+                    if (result.message.x && result.message.x[0] && result.message.x[0].$ && result.message.x[0].$.issued) {
+                        receivedTime = result.message.x[0].$.issued;
+                    }
+                } catch (err) {
+                    console.log('Could not extract received time');
+                }
+
+                try {
+                    let alerts = [];
+                    try {
+                        // Read in existing alerts
+                        const raw = fs.readFileSync('alerts.json', 'utf8');
+                        alerts = raw.trim() ? JSON.parse(raw) : [];
+                        if (!Array.isArray(alerts)) alerts = [];
+                    } catch (readErr) {
+                        console.error('Could not read alerts file during update: ' + readErr.message);
+                        nosyncLog('Could not read alerts file during update: ' + readErr.message, 'ERROR');
+                        return;
+                    }
+                } catch (err) {
+                    if (!config.app?.silent_console) console.error('Error updating alerts.json for update:', err);
+                    nosyncLog('Error updating alerts.json for update: ' + err, 'ERROR');
+                }
+
+                // Find and remove matching alert
+                // Only VTEC properies are matched
+                const alertIndex = alerts.findIndex(alert => 
+                    alert.properties.vtec &&
+                    alert.properties.vtec.office === thisObject.office &&
+                    alert.properties.vtec.phenomena === thisObject.phenomena &&
+                    alert.properties.vtec.significance === thisObject.significance &&
+                    alert.properties.vtec.eventTrackingNumber === thisObject.eventTrackingNumber
+                );
+
+                if (alertIndex !== -1) {
+                    const removedAlert = alerts[alertIndex];
+
+                    // Update fields of the existing alert
+                    removedAlert.expiry = thisObject.endTime || removedAlert.expiry;
+                    removedAlert.properties.vtec = thisObject || removedAlert.properties.vtec;
+                    removedAlert.message = rawText || removedAlert.message;
+                    removedAlert.headline = rawText.split('\n')[0].replace('BULLETIN - ', '').trim() || removedAlert.headline;
+
+                    // Write back updated alerts
+                    fs.writeFileSync('alerts.json', JSON.stringify(alerts, null, 2));
+                    if (!config.app?.silent_console) console.log('Alert updated:', removedAlert.name);
+                    nosyncLog(`${removedAlert.name} updated`, 'INFO');
+
+                    // Break out of processing as the alert has been updated
+                    return;
+                } else {
+                    if (!config.app?.silent_console) console.info('No matching alert found to update. Processing as new...');
+                    nosyncLog('No matching alert found to update. Processing as new...', 'info');
+                }
             } else if (thisObject.actions == 'NEW') {
                 // New alert, continue processing
                 console.log(`Alert action '${thisObject.actions}' detected - new alert.`);
