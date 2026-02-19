@@ -52,7 +52,7 @@ XMPP_PASSWORD=XXXXXXXX
 ## Configuration Setup
 > Starting 1/27/26, settings are stored in a `config.json` file instead of the `.env` file.
 
-Fill out your `config.json` file in the same directory as `index.js`. You may choose to use some, all, or none of the fields below. The example config.js file shows default values.
+Fill out your `config.json` file in the same directory as `index.js`. You may choose to use some, all, or none of the fields below. The example config.js file shows default values. **Remember to remove all code comments since they are technically not valid in JSON.**
 
 ```js
 {

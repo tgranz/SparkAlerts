@@ -31,7 +31,6 @@ const fs = require('node:fs');
 const express = require('express');
 const rateLimit = require('express-rate-limit');
 const { ipKeyGenerator } = require('express-rate-limit');
-const cors = require('cors');
 const { nosyncLog, setLogLevel } = require('./logging.js');
 const nwwsoi = require('./nwwsoi.js');
 
@@ -115,41 +114,47 @@ setLogLevel(config.app?.log_level || 'WARN');
 const app = express();
 var port = config.api?.port || 8080;
 
-// CORS configuration
-const corsOptions = {
-    origin: function (origin, callback) {
-        // First check if the request has no origin
-        if (!origin || origin == '' || origin === 'null') {
-            nosyncLog('Request origin is NULL or empty.', "DEBUG");
-            if (config.security?.allow_no_origin) {
-                nosyncLog('Allowing no-origin request as per configuration.', "DEBUG");
-                return callback(null, true);
-            } else {
-                nosyncLog('Denying no-origin request as per configuration.', "DEBUG");
-                return callback(null, false);
-            }
+// CORS configuration (custom to avoid duplicate Access-Control-Allow-Origin)
+const resolveCorsOrigin = (origin) => {
+    if (!origin || origin === '' || origin === 'null') {
+        nosyncLog('Request origin is NULL or empty.', "DEBUG");
+        if (!config.security?.allow_no_origin) {
+            return false;
         }
-        
-        // Origin is not null or empty, check against whitelist
-        // Allow requests from whitelisted origins
-        for (const domain of config.security?.allowed_origins || []) {
-            if (origin && origin.includes(domain)) {
-                nosyncLog(`Allowing request from ${origin} as per configuration.`, "DEBUG");
-                return callback(null, true);
-            }
-        }
-        
-        // Did not match any whitelisted domains
-        // TODO: handle API key validation here
-        // Deny CORS so browsers enforce restrictions.
-        nosyncLog(`Denying CORS for non-whitelisted origin: ${origin}`, "DEBUG");
-        return callback(null, false);
-    },
+        return origin === 'null' ? 'null' : null;
+    }
 
-    methods: ['GET', 'POST', 'OPTIONS'],
-    allowedHeaders: ['Content-Type', 'Authorization', 'X-Request-Time', 'X-Signature', 'X-Requested-With'],
-    credentials: true,
-    optionsSuccessStatus: 204
+    for (const domain of config.security?.allowed_origins || []) {
+        if (origin.includes(domain)) {
+            nosyncLog(`Allowing request from ${origin} as per configuration.`, "DEBUG");
+            return origin;
+        }
+    }
+
+    nosyncLog(`Denying CORS for non-whitelisted origin: ${origin}`, "DEBUG");
+    return false;
+};
+
+const corsMiddleware = (req, res, next) => {
+    const origin = req.get('origin') || '';
+    const allowedOrigin = resolveCorsOrigin(origin);
+
+    if (allowedOrigin) {
+        res.setHeader('Access-Control-Allow-Origin', allowedOrigin);
+        res.setHeader('Vary', 'Origin');
+        res.setHeader('Access-Control-Allow-Credentials', 'true');
+        res.setHeader('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
+        res.setHeader(
+            'Access-Control-Allow-Headers',
+            'Content-Type, Authorization, X-Request-Time, X-Signature, X-Requested-With'
+        );
+    }
+
+    if (req.method === 'OPTIONS') {
+        return res.sendStatus(204);
+    }
+
+    return next();
 };
 
 // Configure rate limiting
@@ -259,7 +264,7 @@ const validateRequest = (req, res, next) => {
 
 // Apply middleware in order
 app.use(express.json());
-app.use(cors(corsOptions));
+app.use(corsMiddleware);
 app.use(apiRateLimiter)
 
 
