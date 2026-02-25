@@ -54,7 +54,7 @@ function extractCoordinates(rawText, capCoordinates = null) {
     } else {
         // Try extracting decimal coordinate pairs (e.g., "40.85,-124.07 40.84,-124.06" or space-separated pairs like "41.05 -100.22 41.04 -99.02")
         // This regex handles both comma-separated and space-separated coordinates
-        const decPairRe = /(-?\d{1,2}\.\d+)[,\s]+(-?\d{1,3}\.\d+)/g;
+        const decPairRe = /(?:-?\d{1,2}\.\d+)[,\s]+(?:-?\d{1,3}\.\d+)(?=(?:\s+-?\d{1,2}\.\d+[,\s]+-?\d{1,3}\.\d+){2,})/g;
         let m;
         const decCoords = [];
         
