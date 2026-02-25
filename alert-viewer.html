@@ -1,0 +1,573 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>SparkAlerts Viewer</title>
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.css" />
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, sans-serif;
+            background: #f5f5f5;
+            height: 100vh;
+            display: flex;
+            flex-direction: column;
+        }
+
+        #header {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            padding: 20px;
+            box-shadow: 0 2px 8px rgba(0,0,0,0.1);
+            z-index: 10;
+        }
+
+        #header h1 {
+            font-size: 24px;
+            margin-bottom: 10px;
+        }
+
+        #status {
+            display: inline-block;
+            padding: 6px 12px;
+            border-radius: 20px;
+            font-size: 12px;
+            font-weight: 600;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+        }
+
+        #status.connected {
+            background: rgba(76, 175, 80, 0.3);
+            border: 1px solid #4caf50;
+            color: #fff;
+        }
+
+        #status.disconnected {
+            background: rgba(244, 67, 54, 0.3);
+            border: 1px solid #f44336;
+            color: #fff;
+        }
+
+        .container {
+            display: flex;
+            flex: 1;
+            gap: 20px;
+            padding: 20px;
+            overflow: hidden;
+        }
+
+        #map {
+            flex: 1;
+            border-radius: 8px;
+            box-shadow: 0 2px 8px rgba(0,0,0,0.15);
+            z-index: 1;
+        }
+
+        #sidebar {
+            width: 380px;
+            background: white;
+            border-radius: 8px;
+            box-shadow: 0 2px 8px rgba(0,0,0,0.15);
+            display: flex;
+            flex-direction: column;
+            overflow: hidden;
+        }
+
+        #alerts-list {
+            flex: 1;
+            overflow-y: auto;
+            padding: 0;
+        }
+
+        .alert-item {
+            padding: 16px;
+            border-bottom: 1px solid #eee;
+            cursor: pointer;
+            transition: all 0.2s;
+        }
+
+        .alert-item:hover {
+            background: #f9f9f9;
+        }
+
+        .alert-item.active {
+            background: #e3f2fd;
+            border-left: 4px solid #667eea;
+            padding-left: 12px;
+        }
+
+        .alert-severity {
+            display: inline-block;
+            font-size: 11px;
+            font-weight: 700;
+            text-transform: uppercase;
+            padding: 4px 8px;
+            border-radius: 4px;
+            margin-bottom: 8px;
+        }
+
+        .alert-severity.warning {
+            background: #fff3cd;
+            color: #856404;
+        }
+
+        .alert-severity.danger {
+            background: #f8d7da;
+            color: #721c24;
+        }
+
+        .alert-severity.info {
+            background: #d1ecf1;
+            color: #0c5460;
+        }
+
+        .alert-name {
+            font-size: 14px;
+            font-weight: 600;
+            color: #333;
+            margin-bottom: 6px;
+        }
+
+        .alert-time {
+            font-size: 12px;
+            color: #999;
+        }
+
+        #alert-detail {
+            padding: 20px;
+            border-top: 1px solid #eee;
+            background: #fafafa;
+            max-height: 250px;
+            overflow-y: auto;
+        }
+
+        .detail-row {
+            margin-bottom: 10px;
+            font-size: 13px;
+        }
+
+        .detail-label {
+            font-weight: 600;
+            color: #666;
+            display: block;
+            margin-bottom: 4px;
+        }
+
+        .detail-value {
+            color: #333;
+            word-break: break-word;
+        }
+
+        #empty-state {
+            padding: 40px 20px;
+            text-align: center;
+            color: #999;
+        }
+
+        .spinner {
+            display: inline-block;
+            width: 4px;
+            height: 4px;
+            border-radius: 50%;
+            background: currentColor;
+            opacity: 0.6;
+            animation: spin 1.4s linear infinite;
+        }
+
+        .spinner-group {
+            display: inline-flex;
+            gap: 4px;
+        }
+
+        .spinner-group .spinner:nth-child(1) { animation-delay: -0.48s; }
+        .spinner-group .spinner:nth-child(2) { animation-delay: -0.32s; }
+        .spinner-group .spinner:nth-child(3) { animation-delay: -0.16s; }
+
+        @keyframes spin {
+            0% { opacity: 0.6; }
+            50% { opacity: 1; }
+            100% { opacity: 0.6; }
+        }
+
+        @media (max-width: 768px) {
+            .container {
+                flex-direction: column;
+            }
+
+            #sidebar {
+                width: 100%;
+                max-height: 300px;
+            }
+        }
+    </style>
+</head>
+<body>
+    <div id="header">
+        <h1>🌩️ SparkAlerts Viewer</h1>
+        <span id="status" class="disconnected">● Disconnected</span>
+    </div>
+
+    <div class="container">
+        <div id="map"></div>
+        <div id="sidebar">
+            <div id="alerts-list"></div>
+            <div id="alert-detail">
+                <div id="empty-state">
+                    <p>No alert selected</p>
+                    <p style="font-size: 12px; margin-top: 10px;">Select an alert from the list to view details.</p>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.js"></script>
+    <script>
+        // Configuration
+        const API_BASE_URL = 'http://localhost:8433';
+        const API_KEY = 'your-api-key-here'; // Update with your actual API key
+        const USE_AUTH = false; // Set to true if using API key auth
+
+        // App State
+        let map = null;
+        let currentAlert = null;
+        let alerts = new Map();
+        let layerGroup = null;
+        let eventSource = null;
+
+        // Initialize map
+        function initMap() {
+            map = L.map('map').setView([39.8283, -98.5795], 4);
+            L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+                attribution: '© OpenStreetMap contributors',
+                maxZoom: 19
+            }).addTo(map);
+            layerGroup = L.layerGroup().addTo(map);
+        }
+
+        // Generate HMAC signature for authenticated requests
+        function generateSignature(timestamp, method, path, apiKey) {
+            const data = `${timestamp}${method}${path}`;
+            return CryptoJS.SHA256(CryptoJS.enc.Utf8.parse(data), apiKey).toString();
+        }
+
+        // Fetch alerts from API
+        async function fetchAlerts() {
+            try {
+                const headers = { 'Content-Type': 'application/json' };
+
+                if (USE_AUTH) {
+                    const timestamp = Date.now();
+                    const signature = generateSignature(timestamp, 'GET', '/alerts', API_KEY);
+                    headers['Authorization'] = `Bearer ${API_KEY}`;
+                    headers['X-Request-Time'] = timestamp;
+                    headers['X-Signature'] = signature;
+                }
+
+                const response = await fetch(`${API_BASE_URL}/alerts`, { headers });
+                const data = await response.json();
+
+                if (data.status === 'OK' && data.alerts) {
+                    data.alerts.forEach(alert => {
+                        alerts.set(alert.id, alert);
+                    });
+                    renderAlertsList();
+                }
+            } catch (err) {
+                console.error('Error fetching alerts:', err);
+            }
+        }
+
+        // Fetch a specific alert by ID
+        async function fetchAlertById(alertId) {
+            const alertsList = Array.from(alerts.values());
+            return alertsList.find(a => a.id === alertId);
+        }
+
+        // Subscribe to SSE notifications
+        function subscribeToAlerts() {
+            const headers = {};
+
+            if (USE_AUTH) {
+                const timestamp = Date.now();
+                const signature = generateSignature(timestamp, 'GET', '/alerts/subscribe', API_KEY);
+                headers['Authorization'] = `Bearer ${API_KEY}`;
+                headers['X-Request-Time'] = timestamp;
+                headers['X-Signature'] = signature;
+            }
+
+            // Create EventSource with custom headers using fetch workaround
+            eventSource = new EventSource(`${API_BASE_URL}/alerts/subscribe`);
+
+            eventSource.onopen = () => {
+                updateStatus(true);
+                console.log('Connected to alert stream');
+            };
+
+            eventSource.onmessage = async (e) => {
+                try {
+                    const data = JSON.parse(e.data);
+
+                    if (data.status === 'connected') {
+                        console.log('Alert subscription established');
+                        // Fetch all existing alerts on first connection
+                        await fetchAlerts();
+                        return;
+                    }
+
+                    if (data.id && data.name) {
+                        console.log('New alert received:', data.name);
+                        // Wait a moment then fetch the alert details
+                        setTimeout(async () => {
+                            await fetchAlerts();
+                        }, 500);
+                    }
+                } catch (err) {
+                    console.error('Error processing alert message:', err);
+                }
+            };
+
+            eventSource.onerror = (e) => {
+                updateStatus(false);
+                console.error('SSE error:', e);
+                eventSource.close();
+                // Attempt reconnection after 3 seconds
+                setTimeout(subscribeToAlerts, 3000);
+            };
+        }
+
+        // Update connection status
+        function updateStatus(connected) {
+            const statusEl = document.getElementById('status');
+            if (connected) {
+                statusEl.textContent = '● Connected';
+                statusEl.className = 'connected';
+            } else {
+                statusEl.textContent = '● Disconnected';
+                statusEl.className = 'disconnected';
+            }
+        }
+
+        // Render alerts list
+        function renderAlertsList() {
+            const container = document.getElementById('alerts-list');
+            const sortedAlerts = Array.from(alerts.values()).sort((a, b) => {
+                const aTime = new Date(a.issued || 0);
+                const bTime = new Date(b.issued || 0);
+                return bTime - aTime;
+            });
+
+            if (sortedAlerts.length === 0) {
+                container.innerHTML = '<div style="padding: 40px 20px; text-align: center; color: #999;">No alerts yet</div>';
+                return;
+            }
+
+            container.innerHTML = sortedAlerts.map(alert => {
+                const isActive = currentAlert && currentAlert.id === alert.id;
+                const severity = getSeverityClass(alert.name);
+                const timeStr = formatTime(alert.issued);
+
+                return `
+                    <div class="alert-item ${isActive ? 'active' : ''}" onclick="selectAlert('${alert.id}')">
+                        <div class="alert-severity ${severity}">${getSeverityText(alert.name)}</div>
+                        <div class="alert-name">${escapeHtml(alert.name)}</div>
+                        <div class="alert-time">${timeStr}</div>
+                    </div>
+                `;
+            }).join('');
+        }
+
+        // Select and display alert details
+        function selectAlert(alertId) {
+            currentAlert = alerts.get(alertId);
+            if (!currentAlert) return;
+
+            renderAlertsList();
+            renderAlertDetail();
+            renderAlertGeometry();
+
+            // Pan map to alert geometry if available
+            if (currentAlert.geometry && currentAlert.geometry.length > 0) {
+                fitToGeometry(currentAlert.geometry);
+            }
+        }
+
+        // Render alert detail panel
+        function renderAlertDetail() {
+            const detailEl = document.getElementById('alert-detail');
+            if (!currentAlert) {
+                detailEl.innerHTML = '<div id="empty-state"><p>No alert selected</p></div>';
+                return;
+            }
+
+            const html = `
+                <div class="detail-row">
+                    <span class="detail-label">Name</span>
+                    <div class="detail-value">${escapeHtml(currentAlert.name)}</div>
+                </div>
+                ${currentAlert.headline ? `
+                <div class="detail-row">
+                    <span class="detail-label">Headline</span>
+                    <div class="detail-value">${escapeHtml(currentAlert.headline)}</div>
+                </div>
+                ` : ''}
+                <div class="detail-row">
+                    <span class="detail-label">Issued</span>
+                    <div class="detail-value">${new Date(currentAlert.issued).toLocaleString()}</div>
+                </div>
+                ${currentAlert.expiry ? `
+                <div class="detail-row">
+                    <span class="detail-label">Expires</span>
+                    <div class="detail-value">${new Date(currentAlert.expiry).toLocaleString()}</div>
+                </div>
+                ` : ''}
+                ${currentAlert.sender ? `
+                <div class="detail-row">
+                    <span class="detail-label">Sender</span>
+                    <div class="detail-value">${escapeHtml(currentAlert.sender)}</div>
+                </div>
+                ` : ''}
+                ${currentAlert.areaDesc ? `
+                <div class="detail-row">
+                    <span class="detail-label">Area</span>
+                    <div class="detail-value">${escapeHtml(currentAlert.areaDesc)}</div>
+                </div>
+                ` : ''}
+                ${currentAlert.fips ? `
+                <div class="detail-row">
+                    <span class="detail-label">FIPS Codes</span>
+                    <div class="detail-value">${escapeHtml(currentAlert.fips.join(', '))}</div>
+                </div>
+                ` : ''}
+            `;
+
+            detailEl.innerHTML = html;
+        }
+
+        function getGeometryRings(geometry) {
+            if (!Array.isArray(geometry) || geometry.length === 0) return [];
+
+            // MultiPolygon: [ [ [ [lon, lat], ... ] ] ]
+            if (Array.isArray(geometry[0]) && Array.isArray(geometry[0][0]) && Array.isArray(geometry[0][0][0])) {
+                return geometry.flatMap(polygon => polygon);
+            }
+
+            // Polygon: [ [ [lon, lat], ... ] ]
+            if (Array.isArray(geometry[0]) && Array.isArray(geometry[0][0])) {
+                return geometry;
+            }
+
+            // Ring: [ [lon, lat], ... ]
+            if (Array.isArray(geometry[0]) && typeof geometry[0][0] === 'number') {
+                return [geometry];
+            }
+
+            return [];
+        }
+
+        // Render alert geometry on map
+        function renderAlertGeometry() {
+            layerGroup.clearLayers();
+
+            if (!currentAlert || !currentAlert.geometry) return;
+
+            const geometry = currentAlert.geometry;
+            const color = getColorForAlert(currentAlert.name);
+            const rings = getGeometryRings(geometry);
+
+            rings.forEach(ring => {
+                const latLngs = ring.map(coord => [coord[1], coord[0]]);
+                L.polygon(latLngs, {
+                    color: color,
+                    weight: 2,
+                    opacity: 0.7,
+                    fill: true,
+                    fillColor: color,
+                    fillOpacity: 0.2
+                }).addTo(layerGroup);
+            });
+        }
+
+        // Fit map to geometry bounds
+        function fitToGeometry(geometry) {
+            const bounds = L.latLngBounds([]);
+            const rings = getGeometryRings(geometry);
+
+            rings.forEach(ring => {
+                ring.forEach(coord => {
+                    bounds.extend([coord[1], coord[0]]);
+                });
+            });
+
+            if (bounds.isValid()) {
+                map.fitBounds(bounds, { padding: [50, 50] });
+            }
+        }
+
+        // Utility functions
+        function formatTime(dateStr) {
+            if (!dateStr) return 'Unknown';
+            const date = new Date(dateStr);
+            const now = new Date();
+            const diffMs = now - date;
+            const diffMins = Math.floor(diffMs / 60000);
+
+            if (diffMins < 1) return 'Just now';
+            if (diffMins < 60) return `${diffMins}m ago`;
+
+            const diffHours = Math.floor(diffMins / 60);
+            if (diffHours < 24) return `${diffHours}h ago`;
+
+            return date.toLocaleDateString();
+        }
+
+        function getSeverityClass(name) {
+            const nameLower = name.toLowerCase();
+            if (nameLower.includes('warning')) return 'danger';
+            if (nameLower.includes('watch')) return 'warning';
+            return 'info';
+        }
+
+        function getSeverityText(name) {
+            const nameLower = name.toLowerCase();
+            if (nameLower.includes('warning')) return 'Warning';
+            if (nameLower.includes('watch')) return 'Watch';
+            if (nameLower.includes('advisory')) return 'Advisory';
+            return 'Alert';
+        }
+
+        function getColorForAlert(name) {
+            const nameLower = name.toLowerCase();
+            if (nameLower.includes('tornado')) return '#d32f2f';
+            if (nameLower.includes('severe')) return '#f57c00';
+            if (nameLower.includes('flood')) return '#0288d1';
+            if (nameLower.includes('winter')) return '#0277bd';
+            return '#7e57c2';
+        }
+
+        function escapeHtml(text) {
+            const div = document.createElement('div');
+            div.textContent = text;
+            return div.innerHTML;
+        }
+
+        // Initialize app
+        window.addEventListener('DOMContentLoaded', () => {
+            initMap();
+            subscribeToAlerts();
+        });
+
+        // Cleanup on page unload
+        window.addEventListener('beforeunload', () => {
+            if (eventSource) eventSource.close();
+        });
+    </script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/crypto-js/4.1.0/crypto-js.min.js"></script>
+</body>
+</html>

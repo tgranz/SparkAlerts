@@ -3,5 +3,5 @@ SparkAlerts.code-workspace
 .env
 node_modules/
 service.log
-alerts.json
+alerts.jspn
 config.json

@@ -1,5 +1,5 @@
 /*
-(c) 2024 Tyler Granzow - Apache License 2.0
+(c) 2026 Tyler G - see LICENSE
 
 This file hosts an asynchronous function to listen to the NWWS-OI
 XMPP feed, parses incoming alert messages, and stores them in alerts.json
@@ -19,50 +19,37 @@ const { log } = require('./logging.js');
 const { sign } = require('crypto');
 const https = require('https');
 
-// For storing crexentials
+// Utility imports
+const { parseVTEC, parseVTECFromPart, vtecToIso } = require('./utils/vtec.js');
+const { parseHumanTimestampFromText } = require('./utils/timestamp.js');
+const { ugcToFips, expandUgcGroup, lookupZoneDisplay } = require('./utils/ugc.js');
+const { normalizeParagraphs, formatMessageNewlines, cleanAndSplitMessage } = require('./utils/message-formatter.js');
+const { extractCoordinates, createPolygonGeometry } = require('./utils/coordinates.js');
+const { loadAlerts, saveAlerts, deleteExpiredAlerts, applyStartupFilter, upsertAlerts, deleteAlertById } = require('./utils/alert-database.js');
+
+// For storing credentials
 var username = null;
 var password = null;
 var resource = null;
 var MAX_RECONNECT_ATTEMPTS = 10;
 var INITIAL_RECONNECT_DELAY = 2000;
 
-// Startup alert filtering: remove alerts with same eventTrackingNumber if issued before another's startTime
-
-function filterAlertsOnStartup() {
-    try {
-        let alerts = [];
-        try {
-            const raw = fs.readFileSync('alerts.json', 'utf8');
-            alerts = raw.trim() ? JSON.parse(raw) : [];
-            if (!Array.isArray(alerts)) alerts = [];
-        } catch (readErr) {
-            if (readErr.code !== 'ENOENT') {
-                console.warn('alerts.json unreadable during startup filter:', readErr.message);
-            }
-            return;
-        }
-        const etnMap = {};
-        const idMap = {};
-        alerts.forEach(alert => {
-            const id = alert.id;
-            if (!id) return;
-            const issued = new Date(alert.issued || alert.properties?.recievedTime || 0).getTime();
-            if (!idMap[id] || issued > idMap[id].issued) {
-                idMap[id] = { alert, issued };
-            }
-        });
-        // Add alerts without id
-        const filteredAlerts = alerts.filter(alert => !alert.id);
-        // Add only the latest alert for each id
-        filteredAlerts.push(...Object.values(idMap).map(obj => obj.alert));
-        fs.writeFileSync('alerts.json', JSON.stringify(filteredAlerts, null, 2));
-        console.log('Startup alert filter applied.');
-    } catch (err) {
-        console.error('Error during startup alert filter:', err);
-    }
+// Load configuration
+const configPath = path.join(__dirname, 'config.json');
+let config = {};
+try {
+    config = JSON.parse(fs.readFileSync(configPath, 'utf8'));
+} catch (e) {
+    console.error('Could not load config.json:', e);
+    config = {};
 }
 
-filterAlertsOnStartup();
+// Startup alert filtering
+try {
+    applyStartupFilter();
+} catch (err) {
+    console.error('Error during startup alert filter:', err);
+}
 
 (async () => {
     // Polyfill WebSocket for @xmpp/client
@@ -72,54 +59,6 @@ filterAlertsOnStartup();
 
     // Variable to store the interval ID so we can stop it if needed
     let deleteExpiredAlertsInterval = null;
-
-    // Task to clean up the alerts.json file
-    async function deleteExpiredAlerts() {
-        console.log('Running expired alerts cleanup...');
-        try {
-            let alerts = [];
-
-            try {
-                const raw = fs.readFileSync('alerts.json', 'utf8');
-                alerts = raw.trim() ? JSON.parse(raw) : [];
-                if (!Array.isArray(alerts)) alerts = [];
-            } catch (readErr) {
-                if (readErr.code !== 'ENOENT') {
-                    console.warn('alerts.json unreadable during cleanup:', readErr.message);
-                    log('alerts.json unreadable during cleanup: ' + readErr.message);
-                }
-                return; // Nothing to clean
-            }
-
-            // Remove alerts whose endTime (expiry) is in the past
-            const now = new Date();
-            const initialCount = alerts.length;
-            alerts = alerts.filter(alert => {
-                let endTime = null;
-                if (alert.expiry) {
-                    endTime = new Date(alert.expiry);
-                } else if (alert.properties && alert.properties.vtec && alert.properties.vtec.endTime) {
-                    endTime = new Date(alert.properties.vtec.endTime);
-                }
-                if (!endTime || isNaN(endTime.getTime())) return true; // Keep if no valid endTime
-                return now <= endTime; // Keep only non-expired alerts
-            });
-
-            const removedCount = initialCount - alerts.length;
-
-            // Write back only if something was removed
-            if (removedCount > 0) {
-                fs.writeFileSync('alerts.json', JSON.stringify(alerts, null, 2));
-                console.log(`Expired alerts cleanup: removed ${removedCount} alert(s).`);
-                log(`Expired alerts cleanup: removed ${removedCount} alert(s).`);
-            } else {
-                console.log('Expired alerts cleanup: no expired alerts found.');
-            }
-        } catch (err) {
-            log('Error in database cleanup: ' + err);
-            console.error('Error in database cleanup:', err);
-        }
-    }
 
     // Run the deleteExpiredAlerts task every minute
     if (!deleteExpiredAlertsInterval) {
@@ -230,17 +169,22 @@ filterAlertsOnStartup();
         }
     });
 
-    // Load allowed alerts at startup
-const allowedAlertsPath = path.join(__dirname, 'allowedalerts.json');
-let allowedAlerts = [];
-try {
-    allowedAlerts = JSON.parse(fs.readFileSync(allowedAlertsPath, 'utf8'));
-} catch (e) {
-    console.error('Could not load allowedalerts.json:', e);
-    allowedAlerts = [];
-}
+    // Load allowed alerts from config
+    let allowedAlerts = (config.allowedAlerts && Array.isArray(config.allowedAlerts)) ? config.allowedAlerts : [];
+    let allowNoGeometry = (config.allowNoGeometry === true);
 
-// Event listener for incoming stanzas (messages)
+    // Load FIPS county geometry database at startup
+    const fipsGeometryPath = path.join(__dirname, 'fips_county_geometry.json');
+    let fipsGeometry = {};
+    try {
+        const raw = fs.readFileSync(fipsGeometryPath, 'utf8').trim();
+        fipsGeometry = raw ? JSON.parse(raw) : {};
+    } catch (e) {
+        console.error('Could not load fips_county_geometry.json:', e);
+        fipsGeometry = {};
+    }
+
+    // Event listener for incoming stanzas (messages)
     xmpp.on('stanza', (stanza) => {
 
 
@@ -259,9 +203,6 @@ try {
             // capture coordinates extracted from CAP XML (if any)
             let capCoordinates = null;
             // values extracted from non-VTEC CAP XML (used only for the minimal cleanup path)
-            // - capSent / capExpires: ISO timestamps from <sent> / <expires>
-            // - capIdentifier: alert <identifier> (used as fallback id / eventTrackingNumber)
-            // - capNwsHeadline: parameter NWSheadline (preferred headline for non-VTEC cleanup)
             let capSent = null;
             let capExpires = null;
             let capIdentifier = null;
@@ -291,55 +232,7 @@ try {
             // Only do basic escaping cleanup early — preserve preamble structure
             rawText = rawText.replace(/\\r\\n/g, '\n').replace(/\\n/g, '\n');
 
-            // Helper: parse a human-readable timestamp from the message text and return an ISO UTC string.
-            // Matches examples like "1037 PM PST Fri Feb 13 2026" or "9:28 PM MST Fri Feb 13 2026".
-            function parseHumanTimestampFromText(text) {
-                if (!text || typeof text !== 'string') return null;
-                const re = /\b(\d{3,4}|\d{1,2}:\d{2})\s*(AM|PM)\s*([A-Za-z]{2,4})\s*(?:Mon|Tue|Wed|Thu|Fri|Sat|Sun)\s+([A-Za-z]{3})\s+(\d{1,2})\s+(\d{4})\b/i;
-                const m = text.match(re);
-                if (!m) return null;
-                let timeStr = m[1];
-                const ampm = m[2].toUpperCase();
-                const tz = m[3].toUpperCase();
-                const monthStrRaw = m[4];
-                const day = parseInt(m[5], 10);
-                const year = parseInt(m[6], 10);
 
-                // parse hour/minute
-                let hour = 0, minute = 0;
-                if (timeStr.includes(':')) {
-                    const parts = timeStr.split(':');
-                    hour = parseInt(parts[0], 10);
-                    minute = parseInt(parts[1], 10);
-                } else {
-                    if (timeStr.length === 3) {
-                        hour = parseInt(timeStr.slice(0, 1), 10);
-                        minute = parseInt(timeStr.slice(1), 10);
-                    } else {
-                        hour = parseInt(timeStr.slice(0, 2), 10);
-                        minute = parseInt(timeStr.slice(2), 10);
-                    }
-                }
-                if (ampm === 'PM' && hour !== 12) hour += 12;
-                if (ampm === 'AM' && hour === 12) hour = 0;
-
-                const monthStr = monthStrRaw.charAt(0).toUpperCase() + monthStrRaw.slice(1).toLowerCase();
-                const months = { Jan:0, Feb:1, Mar:2, Apr:3, May:4, Jun:5, Jul:6, Aug:7, Sep:8, Oct:9, Nov:10, Dec:11 };
-                const month = months[monthStr];
-                if (month === undefined) return null;
-
-                const tzOffsets = { PST:-8, PDT:-7, MST:-7, MDT:-6, CST:-6, CDT:-5, EST:-5, EDT:-4, AKST:-9, AKDT:-8, HST:-10, GMT:0, UTC:0 };
-                const tzOffset = tzOffsets[tz] !== undefined ? tzOffsets[tz] : null;
-                if (tzOffset === null) return null;
-
-                // local time -> UTC: utc = local - tzOffset
-                const localMillis = Date.UTC(year, month, day, hour, minute);
-                const utcMillis = localMillis - (tzOffset * 60 * 60 * 1000);
-                return new Date(utcMillis).toISOString();
-            }
-
-
-            // ===================== FULL MESSAGE FORMAT DETECTION ===========================
             // If the message contains any of the keywords, skip CAP XML cleanup.
             // Keywords: URGENT, STATEMENT, MESSAGE, REQUEST, BULLETIN (case-insensitive)
             const fullMsgKeywords = /\b(URGENT|STATEMENT|MESSAGE|REQUEST|BULLETIN)\b/i;
@@ -350,7 +243,6 @@ try {
             // used to prevent splitting and other full-message behaviors
             let capMinimalCleanup = false;
             if (!isFullMessage) {
-                // ===================== CAP XML CLEANUP ===========================
                 // If the message contains a CAP XML payload, clean it up as requested
                 const capMatch = rawText.match(/<\?xml[\s\S]*?<alert[\s\S]*?<\/alert>/);
                 if (capMatch) {
@@ -373,14 +265,6 @@ try {
                             return found ? found.value : '';
                         }
 
-                        // Helper to get geocode by valueName
-                        function getGeocode(name) {
-                            if (!info.area || !info.area.geocode) return '';
-                            const geos = Array.isArray(info.area.geocode) ? info.area.geocode : [info.area.geocode];
-                            const found = geos.find(g => g.valueName && g.valueName.toUpperCase() === name.toUpperCase());
-                            return found ? found.value : '';
-                        }
-
                         // Format sent time
                         function formatSentTime(sent) {
                             if (!sent) return '';
@@ -399,38 +283,14 @@ try {
                             }
                         }
 
-                        // Replace areaDesc and UGC with provided values
-                        const areaDesc = `Lake Pontchartrain and Lake Maurepas-Mississippi Sound-
-Lake Borgne-Chandeleur Sound-Breton Sound-
-Coastal Waters from Port Fourchon LA to Lower Atchafalaya River
-LA out 20 nm-
-Coastal waters from the Southwest Pass of the Mississippi River
-to Port Fourchon Louisiana out 20 NM-
-Coastal Waters from Boothville LA to Southwest Pass of the
-Mississippi River out 20 nm-
-Coastal waters from Pascagoula Mississippi to Stake Island out
-20 NM-
-Coastal waters from Port Fourchon Louisiana to Lower Atchafalaya
-River LA from 20 to 60 NM-
-Coastal waters from Southwest Pass of the Mississippi River to
-Port Fourchon Louisiana from 20 to 60 NM-
-Coastal Waters from Stake Island LA to Southwest Pass of the
-Mississippi River from 20 to 60 nm-
-Coastal waters from Pascagoula Mississippi to Stake Island
-Louisiana out 20 to 60 NM-`;
-
-                        const ugc = `GMZ530-532-534-536-538-550-552-555-557-570-572-575-577-010945-`;
-
                         // Clean senderName
                         let sender = info.senderName || '';
                         sender = sender.replace(/^NWS\s*/i, 'National Weather Service ');
 
-                        // Compose output in requested order
+                        // Compose output
                         let cleanedMsg = '';
                         cleanedMsg += sender ? sender + '\n' : '';
-                        cleanedMsg += ugc ? ugc + '\n' : '';
                         cleanedMsg += getParam('VTEC') ? getParam('VTEC') + '\n' : '';
-                        cleanedMsg += areaDesc ? areaDesc + '\n' : '';
                         cleanedMsg += alert.sent ? formatSentTime(alert.sent) + '\n' : '';
                         // prefer to preserve NWSheadline in `headline` (do NOT duplicate into the message)
                         const _nwsHeadline = getParam('NWSheadline') || '';
@@ -438,17 +298,21 @@ Louisiana out 20 to 60 NM-`;
                         cleanedMsg += info.description ? info.description + '\n' : '';
                         cleanedMsg += info.instruction ? info.instruction + '\n' : '';
 
-                        // --- Try to preserve LAT...LON / coordinates from CAP for non-VTEC minimal cleanup ---
+                        // Try to preserve LAT...LON / coordinates from CAP for non-VTEC minimal cleanup
                         try {
                             function decToUgcpair(lat, lon) {
                                 const la = Math.round(Math.abs(Number(lat)) * 100);
                                 const lo = Math.round(Math.abs(Number(lon)) * 100);
-                                return `${String(la).padStart(4, '0')} ${String(lo).padStart(4, '0')}`;
+                                return `${String(la).padStart(4, '0')} ${String(lo)}`;
                             }
                             function ugcPairToCoord(pair) {
                                 const parts = pair.trim().split(/\s+/);
                                 const lat = parseFloat(parts[0].slice(0,2) + '.' + parts[0].slice(2));
-                                const lon = -parseFloat(parts[1].slice(0,2) + '.' + parts[1].slice(2));
+                                // Longitude can be 4 digits (lon < 100) or 5 digits (lon >= 100)
+                                const lonStr = parts[1];
+                                const lonInt = lonStr.length === 5 ? lonStr.slice(0,3) : lonStr.slice(0,2);
+                                const lonDec = lonStr.length === 5 ? lonStr.slice(3) : lonStr.slice(2);
+                                const lon = -parseFloat(lonInt + '.' + lonDec);
                                 return [lat, lon];
                             }
 
@@ -483,7 +347,7 @@ Louisiana out 20 to 60 NM-`;
                                 for (const g of groups) earlyPairs.push(g);
                             }
 
-                            earlyPairs = Array.from(new Set(earlyPairs)).filter(g => /^\d{4}\s+\d{4}$/.test(g));
+                            earlyPairs = Array.from(new Set(earlyPairs)).filter(g => /^\d{4}\s+\d{4,5}$/.test(g));
                             if (earlyPairs.length > 0) {
                                 // append LAT...LON to the cleaned minimal message
                                 cleanedMsg += 'LAT...LON ' + earlyPairs.join(' ') + '\n';
@@ -512,52 +376,15 @@ Louisiana out 20 to 60 NM-`;
                     // Normalize the full rawText after CAP cleanup to convert escape sequences and clean structure
                     rawText = formatMessageNewlines(rawText);
                 }
-                // ===================== END CAP XML CLEANUP ===========================
             }
 
-            // ================================================================================
             // VTEC parser
             // https://www.weather.gov/bmx/vtec
 
-            let thisObject = {};
+            let thisObject = parseVTEC(rawText, parseHumanTimestampFromText) || {};
             let vtec = null;
             let vtecObjects = [];
-            try {
-                vtec = rawText.match(/\/O\..*?\/\n?/);
-                if (!vtec) {
-                    vtec = rawText.match(/<parameter>\s*<valueName>VTEC<\/valueName>\s*<value>(.*?)<\/value>\s*<\/parameter>/);
-                    if (vtec && vtec[1]) vtec = vtec[1];
-                }
-                if (!vtec) throw new Error('No VTEC found');
-                vtecObjects = (typeof vtec === 'string' ? vtec : vtec[0]).split('.');
-                function vtecToIso(ts) {
-                    if (!ts || typeof ts !== 'string') return null;
-                    const m = ts.match(/(\d{2})(\d{2})(\d{2})T(\d{2})(\d{2})Z/);
-                    if (!m) return null;
-                    const yy = parseInt(m[1], 10);
-                    const year = 2000 + yy;
-                    const month = parseInt(m[2], 10) - 1;
-                    const day = parseInt(m[3], 10);
-                    const hour = parseInt(m[4], 10);
-                    const minute = parseInt(m[5], 10);
-                    return new Date(Date.UTC(year, month, day, hour, minute)).toISOString();
-                }
-                thisObject = {
-                    product: vtecObjects[0],
-                    actions: vtecObjects[1],
-                    office: vtecObjects[2],
-                    phenomena: vtecObjects[3],
-                    significance: vtecObjects[4],
-                    eventTrackingNumber: vtecObjects[5],
-                    startTime: (parseHumanTimestampFromText(rawText) || vtecToIso(vtecObjects[6].split('-')[0])),
-                    endTime: vtecToIso(vtecObjects[6].split('-')[1])
-                }
-            } catch (err) {
-                // No VTEC, allow fallback to event-based logic
-                thisObject = {};
-            }
 
-            // --- Remove alerts that have both VTEC and cleaned CAP XML ---
             if (
                 cleanedCAPXML &&
                 thisObject.phenomena &&
@@ -568,7 +395,6 @@ Louisiana out 20 to 60 NM-`;
                 return;
             }
 
-            // --- Remove alerts whose message is just the entire XML code ---
             // If the message is just a CAP XML block, skip it
             const isRawXMLOnly = (
                 rawText.trim().startsWith('<?xml') &&
@@ -579,15 +405,10 @@ Louisiana out 20 to 60 NM-`;
                 return;
             }
 
-            // --- Reject messages that look like embedded/serialized JSON or a full CAP object ---
-            // Some sources send the entire CAP object or a JSON-serialized payload inside the message
-            // (contains lots of quoted key/value pairs, `properties`, `vtec`, `event_tracking_number`, `urn:oid`, etc.).
-            // These should not be added to the public API -- skip them here.
+            // Reject messages that look like embedded/serialized JSON or a full CAP object
             const jsonLikePairs = (rawText.match(/"\w+"\s*:\s*"/g) || []).length;
             const looksLikeEmbeddedJson = /urn:oid:|"properties"\s*:|"event_tracking_number"|"product_type"|\bvtec\b\s*:|\bstartTime\b/i.test(rawText) || jsonLikePairs >= 3;
-            // If the message contains an actual CAP XML block, allow the CAP-cleanup paths to run
-            // (do not treat CAP XML as "embedded JSON"). This ensures non-VTEC CAP XML gets the
-            // minimal cleanup instead of being skipped entirely.
+            
             const capXmlPresent = /<\?xml[\s\S]*?<alert[\s\S]*?<\/alert>/.test(rawText);
             if (looksLikeEmbeddedJson && !capXmlPresent) {
                 console.log('Alert message appears to be embedded/serialized CAP/JSON — skipping.');
@@ -595,7 +416,7 @@ Louisiana out 20 to 60 NM-`;
                 return;
             }
 
-            // --- Allow alerts with missing VTEC/phenomena/significance if event is allowed ---
+            // Allow alerts with missing VTEC/phenomena/significance if event is allowed
             let allowByEvent = false;
             let eventName = null;
             if (!thisObject.phenomena || !thisObject.significance) {
@@ -626,9 +447,6 @@ Louisiana out 20 to 60 NM-`;
             // perform a minimal cleanup: keep only event, sender, ugc, areaDesc, sent, description,
             // and instruction (only if present). This prevents raw CAP XML from showing up.
             if ((!thisObject.phenomena || !thisObject.significance)) {
-                // --- Minimal XML cleanup for non-VTEC alerts ---
-                // Only apply this block to alerts that do NOT have VTEC (no phenomena/significance)
-                // and that contain a CAP XML payload. This ensures SML (simple message logic) is only for non-VTEC XML alerts.
                 const capMatch2 = rawText.match(/<\?xml[\s\S]*?<alert[\s\S]*?<\/alert>/);
                 if (capMatch2) {
                     try {
@@ -651,7 +469,6 @@ Louisiana out 20 to 60 NM-`;
                                 return '';
                             }
 
-                            // --- Preserve preamble and UGC line ---
                             // Find preamble before CAP XML (e.g., "552\nWWUS83 KLMK 061958\nSPSLMK.")
                             const preambleMatch = rawText.match(/^([\s\S]*?)(?=<\?xml)/);
                             let preamble = preambleMatch ? preambleMatch[1].trim() : '';
@@ -774,7 +591,6 @@ Louisiana out 20 to 60 NM-`;
                             let description = extractText(info.description);
                             const instruction = extractText(info.instruction);
 
-                            // --- Capture CAP metadata for non-VTEC minimal-cleanup and populate fallbacks ---
                             try {
                                 if (capObj && capObj.alert) {
                                     // identifier -> use as fallback id / eventTrackingNumber
@@ -787,8 +603,6 @@ Louisiana out 20 to 60 NM-`;
                                     }
 
                                     // expires -> canonical ISO used for expiry / endTime
-                                    // CAP <expires> is commonly found under <alert> or inside the first <info> block —
-                                    // check both locations so we don't miss it due to tag placement or casing.
                                     let _capExpiresSrc = null;
                                     if (capObj.alert.expires) {
                                         _capExpiresSrc = capObj.alert.expires;
@@ -818,47 +632,13 @@ Louisiana out 20 to 60 NM-`;
                                     }
                                     if (!thisObject.eventTrackingNumber) thisObject.eventTrackingNumber = capEventTrack || capIdentifier || '';
                                 }
-                            } catch (e) { /* ignore CAP metadata extraction errors */ }
+                            } catch {}
 
                             // For non-VTEC minimal-cleanup prefer the CAP <event> as the alert `name`
                             if (event && event.length) {
                                 alertName = event;
                             }
 
-                            // Do NOT prepend NWSheadline into `description` here —
-                            // the CAP `NWSheadline` will be inserted into the cleaned
-                            // `message` parts (immediately before `description`).
-
-                            // --- Format sent time as requested ---
-                            function formatIssuedTime(sent) {
-                                if (!sent) return '';
-                                try {
-                                    const d = new Date(sent);
-                                    let hours = d.getHours();
-                                    let mins = d.getMinutes();
-                                    let ampm = hours >= 12 ? 'PM' : 'AM';
-                                    let hour12 = hours % 12 || 12;
-                                    let tz = '';
-                                    const isDST = d.getMonth() >= 2 && d.getMonth() <= 10;
-                                    if (sent.includes('-05:00')) tz = isDST ? 'EDT' : 'EST';
-                                    else if (sent.includes('-06:00')) tz = isDST ? 'CDT' : 'CST';
-                                    else if (sent.includes('-07:00')) tz = isDST ? 'MDT' : 'MST';
-                                    else if (sent.includes('-08:00')) tz = isDST ? 'PDT' : 'PST';
-                                    else if (sent.includes('-09:00')) tz = isDST ? 'AKDT' : 'AKST';
-                                    else if (sent.includes('-10:00')) tz = isDST ? 'HDT' : 'HST';
-                                    else if (sent.includes('-04:00')) tz = isDST ? 'ADT' : 'AST';
-                                    else tz = 'UTC';
-                                    const dateStr = d.toLocaleDateString('en-US', { weekday: 'short', year: 'numeric', month: 'short', day: '2-digit' }).replace(/,/g, '');
-                                    return `${hour12}${mins.toString().padStart(2, '0')} ${ampm} ${tz}, ${dateStr}`;
-                                } catch {
-                                    return sent;
-                                }
-                            }
-
-                            // --- Reorder and build minimalParts per user spec:
-                            // preamble (if any) -> event -> sender -> issued -> UGC -> areaDesc -> NWSheadline -> description -> instruction
-                            // Apply the full paragraph/newline normalization to extracted CAP fields so
-                            // non‑VTEC minimal-cleanup receives the same `\n`/paragraph fixes as full messages.
                             if (areaDesc) areaDesc = normalizeParagraphs(areaDesc);
                             if (capNwsHeadline) capNwsHeadline = normalizeParagraphs(capNwsHeadline);
                             if (description) description = normalizeParagraphs(description);
@@ -914,8 +694,8 @@ Louisiana out 20 to 60 NM-`;
                                     while ((m = decPairRe.exec(txt)) !== null) {
                                         coords.push(decToUgcpair(m[1], m[2]));
                                     }
-                                    const ugc4Re = /\b(\d{4})\s+(\d{4})\b/g;
-                                    while ((m = ugc4Re.exec(txt)) !== null) {
+                                    const ugcRe = /\b(\d{4})\s+(\d{4,5})\b/g;
+                                    while ((m = ugcRe.exec(txt)) !== null) {
                                         coords.push(`${m[1]} ${m[2]}`);
                                     }
                                     return coords;
@@ -983,15 +763,19 @@ Louisiana out 20 to 60 NM-`;
                                         groups = latLonMatch[1].replace(/[^0-9\s]/g, ' ').trim().split(/\s+/).filter(g => /^\d{4}$/.test(g));
                                     }
                                 }
-                                // Deduplicate and validate 4-digit pairs
-                                latLonPairs = Array.from(new Set(groups)).filter(g => /^\d{4}\s+\d{4}$/.test(g));
+                                // Deduplicate and validate coordinate pairs (4 or 5 digit longitude)
+                                latLonPairs = Array.from(new Set(groups)).filter(g => /^\d{4}\s+\d{4,5}$/.test(g));
                                 // Convert UGC-style pairs back to numeric [lat, lon] and store for later use
                                 if (latLonPairs.length > 0) {
                                     function ugcPairToCoord(pair) {
                                         const parts = pair.trim().split(/\s+/);
-                                        // lat 4-digit -> insert decimal after 2 digits, lon 4-digit -> insert decimal after 2 digits, assume west negative
+                                        // lat 4-digit -> insert decimal after 2 digits
                                         const lat = parseFloat(parts[0].slice(0,2) + '.' + parts[0].slice(2));
-                                        const lon = -parseFloat(parts[1].slice(0,2) + '.' + parts[1].slice(2));
+                                        // Longitude can be 4 digits (lon < 100) or 5 digits (lon >= 100)
+                                        const lonStr = parts[1];
+                                        const lonInt = lonStr.length === 5 ? lonStr.slice(0,3) : lonStr.slice(0,2);
+                                        const lonDec = lonStr.length === 5 ? lonStr.slice(3) : lonStr.slice(2);
+                                        const lon = -parseFloat(lonInt + '.' + lonDec);
                                         return [lat, lon];
                                     }
                                     capCoordinates = latLonPairs.map(ugcPairToCoord).filter(Boolean);
@@ -999,20 +783,18 @@ Louisiana out 20 to 60 NM-`;
                             } catch (e) {
                                  // ignore extraction errors
                              }
-                            // --- Insert LAT...LON line FIRST ---
                             if (latLonPairs.length > 0) {
                                 minimalParts.push('LAT...LON ' + latLonPairs.join(' '));
                             } else {
                                 // Fallback: try to extract from event motion or rawText if not found
-                                // Try event motion text for UGC-style pairs
                                 if (info && info.parameter) {
                                     const params = Array.isArray(info.parameter) ? info.parameter : [info.parameter];
                                     const foundMotion = params.find(p => p.valueName && /event\s?motion|eventmotion|eventmotiondescription/i.test(p.valueName));
                                     if (foundMotion && typeof foundMotion.value === 'string') {
                                         const motionCoords = [];
-                                        const ugc4Re = /\b(\d{4})\s+(\d{4})\b/g;
+                                        const ugcRe = /\b(\d{4})\s+(\d{4,5})\b/g;
                                         let m;
-                                        while ((m = ugc4Re.exec(foundMotion.value)) !== null) {
+                                        while ((m = ugcRe.exec(foundMotion.value)) !== null) {
                                             motionCoords.push(`${m[1]} ${m[2]}`);
                                         }
                                         if (motionCoords.length > 0) {
@@ -1021,7 +803,10 @@ Louisiana out 20 to 60 NM-`;
                                             function ugcPairToCoord(pair) {
                                                 const parts = pair.trim().split(/\s+/);
                                                 const lat = parseFloat(parts[0].slice(0,2) + '.' + parts[0].slice(2));
-                                                const lon = -parseFloat(parts[1].slice(0,2) + '.' + parts[1].slice(2));
+                                                const lonStr = parts[1];
+                                                const lonInt = lonStr.length === 5 ? lonStr.slice(0,3) : lonStr.slice(0,2);
+                                                const lonDec = lonStr.length === 5 ? lonStr.slice(3) : lonStr.slice(2);
+                                                const lon = -parseFloat(lonInt + '.' + lonDec);
                                                 return [lat, lon];
                                             }
                                             capCoordinates = latLonPairs.map(ugcPairToCoord).filter(Boolean);
@@ -1041,7 +826,6 @@ Louisiana out 20 to 60 NM-`;
                                     eventMotion = info.eventMotionDescription;
                                 }
 
-                                // --- CAP parameter extraction helpers ---
                                 function getCapParam(name) {
                                     if (!info.parameter) return undefined;
                                     const params = Array.isArray(info.parameter) ? info.parameter : [info.parameter];
@@ -1049,14 +833,12 @@ Louisiana out 20 to 60 NM-`;
                                     return found ? found.value : undefined;
                                 }
 
-                                // --- Waterspout Detection ---
                                 let waterspoutDetection = getCapParam('waterspoutDetection');
                                 let waterspoutLine = '';
                                 if (waterspoutDetection && String(waterspoutDetection).toLowerCase().includes('possible')) {
                                     waterspoutLine = 'WATERSPOUT...POSSIBLE';
                                 }
 
-                                // --- Max Hail Size ---
                                 let maxHailSize = getCapParam('maxHailSize');
                                 let maxHailLine = '';
                                 if (maxHailSize !== undefined) {
@@ -1070,7 +852,6 @@ Louisiana out 20 to 60 NM-`;
                                     }
                                 }
 
-                                // --- Max Wind Gust ---
                                 let maxWindGust = getCapParam('maxWindGust');
                                 let maxWindLine = '';
                                 if (maxWindGust !== undefined) {
@@ -1080,7 +861,6 @@ Louisiana out 20 to 60 NM-`;
                                     }
                                 }
 
-                                // --- Event Motion ---
                                 function isoToZuluHhmm(iso) {
                                     try {
                                         const d = new Date(iso);
@@ -1100,8 +880,8 @@ Louisiana out 20 to 60 NM-`;
                                     while ((m = decPairRe.exec(txt)) !== null) {
                                         coords.push(decToUgcpair(m[1], m[2]));
                                     }
-                                    const ugc4Re = /\b(\d{4})\s+(\d{4})\b/g;
-                                    while ((m = ugc4Re.exec(txt)) !== null) {
+                                    const ugcRe = /\b(\d{4})\s+(\d{4,5})\b/g;
+                                    while ((m = ugcRe.exec(txt)) !== null) {
                                         coords.push(`${m[1]} ${m[2]}`);
                                     }
                                     return coords;
@@ -1132,17 +912,16 @@ Louisiana out 20 to 60 NM-`;
                                 if (coords.length) parts.push(...coords);
                                 const cleaned = parts.join(' ');
 
-                                // If we found UGC-style coord pairs in the event-motion text but did not
-                                // already detect an explicit LAT...LON earlier, insert a LAT...LON
-                                // paragraph so the coordinates appear BEFORE the TIME...MOT...LOC and
-                                // before the MAX HAIL / MAX WIND lines that may follow.
                                 if (coords.length && latLonPairs.length === 0) {
                                     minimalParts.push('LAT...LON ' + coords.join(' '));
                                     latLonPairs = coords.slice();
                                     function ugcPairToCoord(pair) {
                                         const parts2 = String(pair).trim().split(/\s+/);
                                         const lat = parseFloat(parts2[0].slice(0,2) + '.' + parts2[0].slice(2));
-                                        const lon = -parseFloat(parts2[1].slice(0,2) + '.' + parts2[1].slice(2));
+                                        const lonStr = parts2[1];
+                                        const lonInt = lonStr.length === 5 ? lonStr.slice(0,3) : lonStr.slice(0,2);
+                                        const lonDec = lonStr.length === 5 ? lonStr.slice(3) : lonStr.slice(2);
+                                        const lon = -parseFloat(lonInt + '.' + lonDec);
                                         return [lat, lon];
                                     }
                                     capCoordinates = latLonPairs.map(ugcPairToCoord).filter(Boolean);
@@ -1159,7 +938,6 @@ Louisiana out 20 to 60 NM-`;
                             } catch (e) {
                                 // ignore extraction errors
                             }
- // --- END: Extract coordinates and Event Motion ---
 
                             if (minimalParts.length) {
                                 // join using DOUBLE newlines so each `minimalParts` item becomes its own paragraph
@@ -1238,21 +1016,8 @@ Louisiana out 20 to 60 NM-`;
                 // This is a cancellation, delete the alert from the database
                 if (thisObject.actions === 'CAN') {
                     try {
-                        let alerts = [];
-
-                        try {
-                            const raw = fs.readFileSync('alerts.json', 'utf8');
-                            alerts = raw.trim() ? JSON.parse(raw) : [];
-                            if (!Array.isArray(alerts)) alerts = [];
-                        } catch (readErr) {
-                            // If the file is missing or malformed, nothing to delete
-                            if (readErr.code !== 'ENOENT') {
-                                console.warn('alerts.json unreadable, cannot delete alert:', readErr.message);
-                                log('alerts.json unreadable, cannot delete alert: ' + readErr.message);
-                            }
-                            alerts = [];
-                        }
-
+                        const alerts = loadAlerts();
+                        
                         // Find and remove matching alert
                         const alertIndex = alerts.findIndex(alert => 
                             alert.properties &&
@@ -1264,17 +1029,18 @@ Louisiana out 20 to 60 NM-`;
                         );
 
                         if (alertIndex !== -1) {
-                            const removedAlert = alerts.splice(alertIndex, 1)[0];
-                            fs.writeFileSync('alerts.json', JSON.stringify(alerts, null, 2));
-                            console.log('Alert cancelled and removed:', removedAlert.name);
-                            log('Alert cancelled and removed: ' + removedAlert.name);
+                            const alertId = alerts[alertIndex].id;
+                            if (deleteAlertById(alertId)) {
+                                console.log('Alert cancelled and removed:', alerts[alertIndex].name);
+                                log('Alert cancelled and removed: ' + alerts[alertIndex].name);
+                            }
                         } else {
                             console.log('No matching alert found to cancel.');
                             log('No matching alert found to cancel.');
                         }
                     } catch (err) {
-                        console.error('Error updating alerts.json for cancellation:', err);
-                        log('Error updating alerts.json for cancellation: ' + err);
+                        console.error('Error during alert cancellation:', err);
+                        log('Error during alert cancellation: ' + err);
                     }
                     return;
                 }
@@ -1290,10 +1056,6 @@ Louisiana out 20 to 60 NM-`;
             }
 
             // Extract alert name
-            // Prefer CAP <event> (or CAP NWSheadline when available) since it describes the
-            // specific message part — this avoids taking a blanket "BULLETIN" preamble
-            // (for example a Watch) when the CAP payload is actually a different event
-            // such as "Special Weather Statement".
             var alertNameMatch = rawText.match(/<event>(.*?)<\/event>/i);
             var alertName = alertNameMatch ? alertNameMatch[1].trim() : null;
 
@@ -1307,10 +1069,6 @@ Louisiana out 20 to 60 NM-`;
             if (!alertName) alertName = 'Unknown Alert';
 
             // If name is generic/unknown, try to infer a better name from the message using allowedalerts.json
-            // Rules:
-            // - If message contains an allowed alert name (case-insensitive), use that name.
-            // - Do NOT use "Severe Weather Statement" or "Flash Flood Statement" even if present.
-            // - "Special Weather Statement" is allowed and will be used if present in allowedalerts.json.
             if ((!alertName || alertName === 'Unknown Alert') && Array.isArray(allowedAlerts)) {
                 const txt = String(rawText || '').toUpperCase();
                 const excluded = new Set(['SEVERE WEATHER STATEMENT', 'FLASH FLOOD STATEMENT']);
@@ -1351,381 +1109,16 @@ Louisiana out 20 to 60 NM-`;
                 console.log('Could not extract received time');
             }
 
-            // Extract lat/lon
-            var latLonMatch = rawText.match(/LAT\.\.\.LON\s+([\d\s]+)/);
-            let coordinates = [];
-            var standardCoordinates = [];
- 
-            if (latLonMatch) {
-                var nums = latLonMatch[1].trim().split(/\s+/);
-                console.log(`Extracted ${nums.length / 2} coordinate pairs`);
-                for (let i = 0; i < nums.length; i += 2) {
-                    coordinates.push({
-                        lat: parseFloat(nums[i].slice(0, 2) + '.' + nums[i].slice(2)),
-                        lon: -parseFloat(nums[i + 1].slice(0, 2) + '.' + nums[i + 1].slice(2)) // Assuming western hemisphere
-                    });
+            // Extract coordinates using utility function
+            const coordinates = extractCoordinates(rawText, capCoordinates);
+
+            // Check if geometry is required and not available
+            if (!allowNoGeometry && (!coordinates || coordinates.length === 0)) {
+                // If allowNoGeometry is false and no coordinates found, skip unless this is an update/correction/continuation
+                if (thisObject.actions !== 'UPG' && thisObject.actions !== 'COR' && thisObject.actions !== 'CON') {
+                    console.log('Alert has no geometry and allowNoGeometry is false - skipping');
+                    return;
                 }
- 
-                // Standardize coordinates to [[lat, lon], ...]
-                if (Array.isArray(coordinates)) {
-                    standardCoordinates = coordinates
-                        .map(item => {
-                            // handle already-array form [lat, lon]
-                            if (Array.isArray(item) && item.length >= 2) {
-                                return [Number(item[0]), Number(item[1])];
-                            }
-                            // handle object form {lat, lon}
-                            if (item && typeof item === 'object' && 'lat' in item && 'lon' in item) {
-                                return [Number(item.lat), Number(item.lon)];
-                            }
-                            return null;
-                        })
-                        .filter(pair => pair && isFinite(pair[0]) && isFinite(pair[1]));
-                }
- 
-                // Replace original coordinates with standardized form
-                coordinates = standardCoordinates;
-            } else {
-                // No coordinates found
-                coordinates = null;
-            }
-            // If no LAT...LON line was present in rawText, but we captured coords from CAP XML, use them
-            if ((!coordinates || coordinates.length === 0) && Array.isArray(capCoordinates) && capCoordinates.length > 0) {
-                coordinates = capCoordinates;
-             }
-            // Do not skip alerts if no coordinates; just omit the property
-
-            // Simple message beautification
-            // TODO: filter and parse messages with description and instruction tags
-
-            // Normalize paragraphs while preserving paragraph breaks:
-            // - collapse 3+ blank lines to 2
-            // - join single-line wraps inside a paragraph into a single line (replace single \n with space)
-            // - trim leading/trailing blank lines
-            // - additionally collapse *one* extra paragraph break (\n\n -> \n) for specific
-            //   known patterns (preamble numbers, preamble codes, UGC lines, VTEC lines,
-            //   timestamps, common headlines, and short capitalized name splits like
-            //   "San\n\nJoaquin"). These are conservative, pattern-specific fixes.
-            function normalizeParagraphs(text) {
-                if (!text) return '';
-                text = String(text).replace(/\r\n/g, '\n');
-                // preserve up to two leading newlines (some preambles expect a double-blank line)
-                text = text.replace(/^\n{3,}/, '\n\n');
-                // remove leading/trailing spaces but keep newlines
-                text = text.replace(/^[ \t]+|[ \t]+$/g, '');
-                // collapse 3+ blank lines into 2
-                text = text.replace(/\n{3,}/g, '\n\n');
-                // split paragraphs on one-or-more blank lines, join wrapped lines inside each paragraph
-                // EXCEPTION: preserve a single newline that precedes a timestamp so the time stays on its own line
-                const paras = text.split(/\n{2,}/).map(p => p
-                    .replace(/\n+(?=(?:At\s+)?(?:\d{3,4}|\d{1,2}(?::\d{2})?)\s*(?:AM|PM))/gi, '\n')
-                    .replace(/\n+/g, ' ')
-                    .trim()
-                ).filter(Boolean);
-
-                // Re-join paragraphs using a canonical paragraph separator
-                let out = paras.join('\n\n');
-
-                // Ensure delimiters '&&' and '$$' are surrounded by double-newlines
-                out = out.replace(/\s*&&\s*/g, '\n\n&&\n\n');
-                out = out.replace(/\s*\$\$\s*/g, '\n\n$$\n\n');
-
-                // Ensure that a delimiter '&&' is followed by a double-newline before LAT...LON
-                // handle cases with no whitespace, single newline, or multiple whitespace/newlines
-                out = out.replace(/&&\s*\n+(?=\s*LAT\.\.\.LON)/g, '&&\n\n');
-                out = out.replace(/&&(?=\s*LAT\.\.\.LON)/g, '&&\n\n');
-
-                // --------------------------- Targeted fixes ---------------------------
-                // 1) Number-only preamble lines (e.g. "140\n\nWGUS86 ...") -> keep a single newline
-                out = out.replace(/(^|\n)(\d{1,4})\n\n(?=[A-Z0-9])/gm, '$1$2\n');
-
-                // 2) UGC-style line that ends with a hyphen: keep a single newline after it
-                out = out.replace(/([A-Z]{2,3}[0-9]{3}(?:[>-][0-9]{3,6})*-)\n\n/g, '$1\n');
-
-                // 3) VTEC or other slash-enclosed blocks (e.g. "/O.NEW.../" or "/00000.N.ER.../")
-                //    should not be separated by an extra blank line
-                out = out.replace(/(\/[^\n\/]{1,200}?\/)\n\n/g, '$1\n');
-
-                // 4) Short capitalized-name splits (e.g. "San\n\nJoaquin") -> merge to a single newline
-                out = out.replace(/(\b[A-Z][a-z]{1,20})\n\n([A-Z][a-z]{1,20}\b)/g, '$1\n$2');
-
-                // 5) AWIPS/preamble product headers and adjacent all-caps codes (WGUS86 KSTO 161749, FLSSTO, etc.)
-                //    turn double-newline into a single newline so header lines remain adjacent
-                out = out.replace(/(^|\n)([A-Z]{2,6}\s+[A-Z]{2,4}\s+\d{5,8})\n\n(?=[A-Z0-9])/gm, '$1$2\n');
-                out = out.replace(/(^|\n)([A-Z]{4,10})\n\n(?=[A-Z0-9])/gm, '$1$2\n');
-
-                // 6) Generic adjacent ALL-CAPS/code lines -> single newline (conservative catch-all)
-                out = out.replace(/(^|\n)([A-Z0-9\/\.\-&' ]{1,60})\n\n([A-Z0-9\/\.\-&' ]{1,60})/gm, '$1$2\n$3');
-
-                // 7) Specific phrase/timestamp fixes: Flood Advisory, NWS office line, human timestamp
-                out = out.replace(/(Flood Advisory)\n\n/gi, '$1\n');
-                // Collapse double-newline after 'National Weather Service <office>' whether or not there's a trailing comma
-                out = out.replace(/(National Weather Service [^\n,]{1,120},)\n\n/gi, '$1\n');
-                out = out.replace(/(National Weather Service [^\n,]{1,120})(?!,)\n\n/gi, '$1\n');
-                // Ensure exactly one newline BEFORE a human timestamp (collapse multiple blank lines)
-                // Accept times like "839 PM", "0839 PM", or "9:39 PM" and common real-world variants
-                out = out.replace(/\n{2,}(?=(?:At\s+)?(?:\d{3,4}|\d{1,2}(?::\d{2})?)\s*(?:AM|PM)\s*(?:PST|PDT|MST|MDT|CST|CDT|EST|EDT|HST|HDT|AKDT|AKST)\s*(?:,?\s*(?:Mon|Tue|Wed|Thu|Fri|Sat|Sun))?\s*[A-Za-z]{3}\s+\d{1,2}\s+\d{4})/gi, '\n');
-                // Extra fallback: collapse double-newline immediately before 3- or 4-digit times (e.g. "\n\n839 PM...")
-                out = out.replace(/\n{2,}(?=(?:At\s+)?\d{3,4}\s*(?:AM|PM))/gi, '\n');
-                // Ensure timestamp is followed by exactly two newlines (timestamp ends paragraph)
-                out = out.replace(/((?:At\s+)?(?:\d{3,4}|\d{1,2}(?::\d{2})?)\s*(?:AM|PM)\s*(?:PST|PDT|MST|MDT|CST|CDT|EST|EDT|HST|HDT|AKDT|AKST)\s*(?:,?\s*(?:Mon|Tue|Wed|Thu|Fri|Sat|Sun))?\s*[A-Za-z]{3}\s+\d{1,2}\s+\d{4})\n*/gi, '$1\n\n');
-
-                // 10) Collapse double-newline after common section headings (EXCEPT those that should remain their own paragraph)
-                (function(){
-                    // keep these compact (collapse the extra blank line)
-                    const headings = [
-                        'WIND',
-                        'HAIL',
-                        'HAIL THREAT',
-                        'WIND THREAT',
-                        'TORNADO',
-                        'TORNADO DAMAGE THREAT',
-                        'THUNDERSTORM DAMAGE THREAT',
-                        'FLASH FLOOD DAMAGE THREAT',
-                        'FLASH FLOOD',
-                        'WATERSPOUT',
-                        'EXPECTED RAINFALL RATE'
-                    ];
-                    for (const h of headings) {
-                        const esc = h.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-                        // match the heading possibly followed by dots and whitespace, then two+ newlines
-                        const re = new RegExp('(' + esc + '(?:\.{2,}|\.{0,3})?)\\n\\n', 'gi');
-                        out = out.replace(re, '$1\n');
-                    }
-                })();
-
-                // Ensure the following headings have TWO newlines BEFORE them but ONLY ONE newline AFTER
-                (function(){
-                    const adjust = ['LAT...LON','TIME...MOT...LOC','TIME.MOT.LOC','MAX HAIL SIZE','MAX WIND GUST','WATERSPOUT'];
-                    for (const h of adjust) {
-                        const esc = h.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-
-                        // 1) If the heading follows a paragraph without a blank line, ensure a blank line BEFORE it
-                        //    (convert single-newline separation into a paragraph break)
-                        out = out.replace(new RegExp('([^\\n])\\n(\\s*' + esc + '(?:\\.{2,}|\\.{0,3})?[^\\n]*)','gi'), '$1\\n\\n$2');
-
-                        // 2) Normalize any amount of blank lines BEFORE the heading down to exactly TWO
-                        out = out.replace(new RegExp('\\n{2,}(\\s*' + esc + '(?:\\.{2,}|\\.{0,3})?[^\\n]*)','gi'), '\\n\\n$1');
-
-                        // 3) Ensure exactly ONE newline AFTER the heading (collapse 2+ following newlines to 1)
-                        out = out.replace(new RegExp('(' + esc + '(?:\\.{2,}|\\.{0,3})?[^\\n]*)\\n{2,}','gi'), '$1\\n');
-
-                        // 4) If heading is at EOF with no trailing newline, ensure a single trailing newline
-                        out = out.replace(new RegExp('(' + esc + '(?:\\.{2,}|\\.{0,3})?[^\\n]*)$','gi'), '$1\\n');
-                    }
-                })();
-
-                // 8) Hyphen-terminated areaDesc handling:
-                //    - keep adjacent capitalized fragments joined (e.g. "X-\nY" -> "X-Y")
-                //    - collapse stray newlines inside long hyphen-separated areaDesc paragraphs
-                //      (e.g. "Mariposa-...-Kings Canyon NP-Grant Grove Area" should be a single paragraph)
-                out = out.replace(/(-)\n+(?=\s*[A-Z][a-z])/g, '$1');
-
-                // Collapse internal single-newlines inside paragraphs that contain multiple hyphen-separated
-                // tokens (these are almost always areaDesc lines). Run this BEFORE we force a newline
-                // before "Including" so the subsequent rule can place "Including" on its own line.
-                out = out.replace(/(^|\n)((?:(?!\n).*-){2,}.*?)(?=\n{2,}|$)/gm, function(_, pfx, body){
-                    return pfx + body.replace(/\n+/g, ' ');
-                });
-
-                // Ensure 'Including' starts on its own line when it follows an area-desc fragment
-                out = out.replace(/-\s*(Including\b)/gi, '-\n$1');
-
-                // 9) Collapse any newlines inside an "Including ..." list (until the next paragraph) into spaces
-                //    (the "Including" heading will be on its own line due to the rule above)
-                out = out.replace(/(Including\b[\s\S]*?)(?=\n{2,}|$)/gi, function(m){ return m.replace(/\n+/g, ' '); });
-
-                // 9b) Normalize "locations ... include" blocks:
-                //    - ensure exactly one newline after the heading, list each location on its own line,
-                //      and end the list with two newlines (unless the following paragraph already provides separation).
-                out = out.replace(/(locations(?:\s+impacted)?\s+includes?\b[^\n]*)\n+([\s\S]*?)(?=\n{2,}|$)/gi, function(_, heading, listBody){
-                    // collapse internal newlines to spaces, then split on common separators
-                    const flat = listBody.replace(/\n+/g, ' ').trim();
-                    const parts = flat.split(/\s*(?:,|;|\/|\band\b|\s-\s|\s+—\s+)\s*/i).map(s=>s.trim()).filter(Boolean);
-                    if (parts.length <= 1) {
-                        // not a multi-item list — ensure single newline after heading and keep remainder
-                        return heading + '\n' + flat;
-                    }
-                    // return heading + newline + one-item-per-line + paragraph break
-                    return heading + '\n' + parts.join('\n') + '\n\n';
-                });
-
-                // 9c) Collapse an extra blank line before short all-caps region/state names (e.g. "\n\nKANSAS") to a single newline,
-                //      but do not collapse section headings like PRECAUTIONARY/PREPAREDNESS ACTIONS or other known section headers.
-                out = out.replace(/\n{2,}(?=\s*(?!PRECAUTIONARY|PREPAREDNESS|ACTIONS|WHAT|WHERE|IMPACTS|LAT\.{3}|TIME|WIND|HAIL|TORNADO)[A-Z0-9 '\&\-.]{1,40}\b(?:\.{3})?(?:\n|$))/gi, '\n');
-
-                // 11) Collapse double-newline between numeric-only lines (UGC/LAT...LON number lists)
-                // Convert patterns like "1234 56789\n\n2345 67890" -> single newline between numeric lines
-                out = out.replace(/(^|\n)(\s*(?:\d{3,5}(?:\s+\d{3,5})*)\s*)\n\n(?=\s*\d{3,5})/gm, '$1$2\n');
-
-                // 12) For starred sections like "* WHAT...", "* WHERE...", etc. collapse internal double-newlines
-                // into single newlines while preserving a double-newline between different sections.
-                // Do not allow the starred-section block to consume trailing delimiter lines
-                // (lines that contain only &&, $ or $$). Stop the block before such delimiter lines.
-                out = out.replace(/(\*\s+[A-Z][\s\S]*?)(?=\n\*\s+[A-Z]|\n\s*(?:&&|\$\$?|\$)\s*(?:\n|$)|$)/g, function(block) {
-                    // collapse multiple blank lines inside the block to single newlines
-                    // but do not remove the final blank-line separator (we'll re-ensure it)
-                    let inner = block.replace(/\n{3,}/g, '\n\n');
-                    // collapse internal double-newlines that are not immediately followed by '* '
-                    inner = inner.replace(/\n\n(?!\*\s)/g, '\n');
-                    // ensure block ends with exactly two newlines so sections stay separated
-                    inner = inner.replace(/\n+$/g, '') + '\n\n';
-                    return inner;
-                });
-
-                // 13) Ensure short all-caps product lines (e.g., "NPWBUF") are followed by a blank line
-                // This keeps preamble blocks visually separated: "546\nWWUS71 KBUF 170217\nNPWBUF\n\n"
-                out = out.replace(/(^|\n)([A-Z]{3,8})\n(?!\n)/gm, '$1$2\n\n');
-
-                // Ensure PRECAUTIONARY / PREPAREDNESS ACTIONS (with or without leading '*') is its own paragraph
-                // Accept optional spaces around the slash and preserve a leading '* ' if present.
-                out = out.replace(/\n{0,2}\s*(\*\s*)?(PRECAUTIONARY\s*\/\s*PREPAREDNESS ACTIONS\.{3,})\s*\n{0,2}/gi, '\n\n$1$2\n\n');
-
-                // Final enforcement: ensure '&&' and '$$' are surrounded by exactly two newlines
-                // This runs last so earlier replacements can't collapse these separators.
-                out = out.replace(/\n{0,2}&&\n{0,2}/g, '\n\n&&\n\n');
-                out = out.replace(/\n{0,2}\$\$\n{0,2}/g, '\n\n$$\n\n');
-
-                // Last-resort: if any double-newline still appears immediately before a 3- or 4-digit time
-                // (examples: "\n\n839 PM...", "\n\n1139 PM..."), collapse it to a single newline.
-                out = out.replace(/\n{2,}(?=(?:At\s+)?\d{3,4}\s*(?:AM|PM))/gi, '\n');
-
-                // Final collapse: reduce any 3+ consecutive newlines to exactly two
-                // (fixes cases where earlier replacements accidentally introduce a third blank line)
-                out = out.replace(/\n{3,}/g, '\n\n');
-
-                return out;
-            }
-
-            // Normalize incoming message newlines and enforce heading spacing rules.
-            // Hoisted so it can be used early during CAP/rawText processing as well as per-part.
-            function formatMessageNewlines(msg) {
-                if (!msg) return msg;
-                let formatted = String(msg);
-
-                // 0) Remove all XML tags (anything between < and >)
-                formatted = formatted.replace(/<[^>]+>/g, '');
-
-                // 1) Convert literal escaped sequences ("\\n", "\\r\\n") into actual newlines
-                formatted = formatted.replace(/\\r\\n/g, '\n');
-                formatted = formatted.replace(/\\n/g, '\n');
-
-                // 2) Normalize any remaining CR/LF into \n
-                formatted = formatted.replace(/\r\n/g, '\n').replace(/\r/g, '\n');
-
-                // 3) Remove stray trailing/leading whitespace around newlines (prevents " <newline>HEADING" cases)
-                formatted = formatted.replace(/[ \t]+\n/g, '\n');
-                formatted = formatted.replace(/\n[ \t]+/g, '\n');
-                formatted = formatted.replace(/^\s+|\s+$/g, '');
-
-                // 4) Defensive: replace any remaining backslash+n sequences
-                formatted = formatted.replace(/\\+n/g, '\n');
-
-                // 5) Collapse runs of 3+ newlines down to exactly 2 (paragraph separation)
-                formatted = formatted.replace(/\n{3,}/g, '\n\n');
-
-                // 6) Ensure exact spacing before headings that should have TWO newlines
-                const twoNL = ['HAZARD\\.\\.\\.', 'SOURCE\\.\\.\\.', 'IMPACT\\.\\.\\.', 'Locations impacted include'];
-                for (const h of twoNL) {
-                    // If the heading is on the same line as previous text (possibly separated by spaces),
-                    // strip those spaces and insert exactly two newlines before the heading.
-                    formatted = formatted.replace(new RegExp('([^\\n\\s])\\s*(' + h + ')', 'g'), '$1\n\n$2');
-                    // Collapse any existing newline(s)+optional spaces before the heading to exactly two newlines
-                    formatted = formatted.replace(new RegExp('\\n+\\s*(' + h + ')', 'g'), '\n\n$1');
-                }
-
-                // 7) Ensure exact spacing before headings that should have ONE newline
-                const oneNL = [
-                    'TORNADO DAMAGE THREAT\\.\\.\\.',
-                    'THUNDERSTORM DAMAGE THREAT\\.\\.\\.',
-                    'FLASH FLOOD DAMAGE THREAT\\.\\.\\.',
-                    'FLASH FLOOD\\.\\.\\.',
-                    'TIME\\.\\.\\.MOT\\.\\.\\.LOC',
-                    'TORNADO\\.\\.\\.',
-                    'WATERSPOUT\\.\\.\\.',
-                    'SNOW SQUAL\\.\\.\\.',
-                    'SNOW SQUALL IMPACT\\.\\.\\.',
-                    'SNOW SQUALL\\.\\.\\.',
-                    'MAX WIND GUST\\.\\.\\.',
-                    'MAX HAIL SIZE\\.\\.\\.',
-                    'WIND THREAT\\.\\.\\.',
-                    'HAIL THREAT\\.\\.\\.',
-                    'WIND, AND HAIL\\.\\.\\.',
-                    'AND HAIL\\.\\.\\.',
-                    'EXPECTED RAINFALL RATE\\.\\.\\.'
-                ];
-                for (const h of oneNL) {
-                    // If heading immediately follows text (possibly with spaces), strip spaces and insert one newline
-                    formatted = formatted.replace(new RegExp('([^\\n\\s])\\s*(' + h + ')', 'g'), '$1\n$2');
-                    // Collapse any existing newline(s)+optional spaces before the heading to exactly one newline
-                    formatted = formatted.replace(new RegExp('\\n+\\s*(' + h + ')', 'g'), '\n$1');
-                }
-
-                // 8) Ensure TIME...MOT...LOC is single-lined (followed by normal spacing)
-                formatted = formatted.replace(/(LAT\.\.\.LON[^\n]*)\n+(\s*TIME\.\.\.MOT\.\.\.LOC)/g, '$1\n$2');
-
-                // 9) Final pass: remove any remaining trailing spaces before newlines, collapse multiples and trim
-                formatted = formatted.replace(/[ \t]+\n/g, '\n');
-                formatted = formatted.replace(/\n{3,}/g, '\n\n');
-                formatted = formatted.replace(/^\s+|\s+$/g, '');
-
-                return formatted;
-            }
-
-            // --- START: Message cleanup and splitting logic ---
-
-            /**
-             * Cleans up and splits the alert message so that && and $$ tokens (and any trailing text)
-             * are appended to the previous message part, not as their own part.
-             * Also removes XML tags and replaces 2+ spaces with \n.
-             * @param {string} msg
-             * @returns {string[]} Array of cleaned message blocks
-             */
-            function cleanAndSplitMessage(msg) {
-                if (!msg) return [];
-
-                // Remove XML tags (anything between <...>)
-                msg = msg.replace(/<[^>]+>/g, '');
-
-                // Replace 2+ spaces with \n
-                msg = msg.replace(/ {2,}/g, '\n');
-
-                // Split at every && or $$, but append the delimiter and its trailing text to the previous part
-                let splitRegex = /(\s*(?:&&|\$\$)[^\s]*)/g;
-                let parts = [];
-                let lastIndex = 0;
-                let match;
-                while ((match = splitRegex.exec(msg)) !== null) {
-                    // Everything before the delimiter
-                    let before = msg.slice(lastIndex, match.index);
-                    if (parts.length === 0) {
-                        parts.push(before + match[0]);
-                    } else {
-                        parts[parts.length - 1] += before + match[0];
-                    }
-                    lastIndex = splitRegex.lastIndex;
-                }
-                // Any remaining text after the last delimiter
-                if (lastIndex < msg.length) {
-                    let after = msg.slice(lastIndex);
-                    if (parts.length === 0) {
-                        parts.push(after);
-                    } else {
-                        parts[parts.length - 1] += after;
-                    }
-                }
-
-                // Only split at && or $$ delimiters, do NOT split at UGC codes
-                let blocks = parts.map(part => normalizeParagraphs(part));
-                // Ensure delimiters are surrounded by double newlines
-                blocks = blocks.map(b => {
-                    if (!b) return b;
-                    b = b.replace(/\s*&&\s*/g, '\n\n&&\n\n');
-                    b = b.replace(/\s*\$\$\s*/g, '\n\n$$\n\n');
-                    return b;
-                });
-                // Remove empty blocks (but keep blocks with &&, $$, or text)
-                return blocks.filter(b => b && b.replace(/\s/g, '').length > 0);
             }
 
             // Use the new cleanup/split function
@@ -1753,9 +1146,6 @@ Louisiana out 20 to 60 NM-`;
             try {
                 // Helper: escape for RegExp
                 function _escRe(s) { return String(s).replace(/[.*+?^${}()|[\]\\]/g, '\\$&'); }
-                // Heuristic: detect short uppercase continuation lines (e.g. "EVENING") that are
-                // part of a wrapped headline and merge them into the headline while removing
-                // the wrapped line from the raw message so it is not duplicated.
                 function looksLikeHeadlineContinuation(nextLine, firstLine) {
                     if (!nextLine || !nextLine.trim()) return false;
                     const t = nextLine.trim();
@@ -1798,10 +1188,6 @@ Louisiana out 20 to 60 NM-`;
                         headline = normalizeHeadlineCandidate(candidate);
                     }
 
-                    // If the computed headline looks like a numeric/product code (e.g. "785") or is too short,
-                    // try to prefer a more descriptive line from the full rawText.  This fixes cases where the
-                    // first raw line is an AWIPS/product number and a real headline appears later (e.g. "...FLOOD
-                    // ADVISORY IN EFFECT UNTIL 445 PM CST THIS AFTERNOON...").
                     const isJunkHeadline = !headline || /^[\d\W_]+$/.test(headline) || /^[0-9]{1,4}$/.test(headline) || /^[A-Z0-9]{1,4}$/.test(headline) || headline.length < 4;
                     if (isJunkHeadline) {
                         // Prefer explicit "IN EFFECT" phrases first (allow a one-line continuation after the IN EFFECT phrase)
@@ -1822,177 +1208,21 @@ Louisiana out 20 to 60 NM-`;
             } catch {}
 
             // Build parsedAlert objects for each message part
-            // Helper: expand a UGC group string into individual UGC IDs (ignore timestamps / non-3-digit tokens)
-            function expandUgcGroup(group) {
-                if (!group) return [];
-                // Trim trailing hyphens and capture prefix letters
-                group = group.replace(/^-+|-+$/g, '').trim();
-                const m = group.match(/^([A-Z]{2,3})([\s\S]*)$/);
-                if (!m) return [];
-                const prefix = m[1];
-                const rest = m[2].replace(/-+$/g, '');
-                const parts = rest.split('-').filter(Boolean);
-                const out = new Set();
-
-                for (const p of parts) {
-                    // ignore 6-digit timestamps like 141800
-                    if (/^\d{6}$/.test(p)) continue;
-                    // single 3-digit
-                    let r;
-                    if ((r = p.match(/^\s*(\d{3})\s*$/))) {
-                        out.add(prefix + r[1]);
-                        continue;
-                    }
-                    // range like 016>018
-                    if ((r = p.match(/^(\d{3})>(\d{3})$/))) {
-                        const start = parseInt(r[1], 10);
-                        const end = parseInt(r[2], 10);
-                        if (start <= end && end - start < 1000) {
-                            for (let n = start; n <= end; n++) out.add(prefix + String(n).padStart(3, '0'));
-                        }
-                        continue;
-                    }
-                    // if part contains letters or unexpected format, ignore
-                }
-                return Array.from(out);
-            }
-
-            // Simple HTTPS GET -> JSON with small cache
-            const __zoneInfoCache = (global.__zoneInfoCache = global.__zoneInfoCache || new Map());
-            function getJson(url, timeout = 5000) {
-                return new Promise((resolve, reject) => {
-                    try {
-                        const req = https.get(url, { headers: { 'User-Agent': 'SparkAlerts', 'Accept': 'application/geo+json, application/json' } }, (res) => {
-                            let data = '';
-                            res.on('data', (c) => data += c);
-                            res.on('end', () => {
-                                try {
-                                    const obj = JSON.parse(data);
-                                    resolve(obj);
-                                } catch (e) {
-                                    reject(e);
-                                }
-                            });
-                        });
-                        req.on('error', reject);
-                        req.setTimeout(timeout, () => { req.destroy(new Error('timeout')); });
-                    } catch (e) { reject(e); }
-                });
-            }
-
-            async function lookupZoneDisplay(ugcId) {
-                if (!ugcId) return null;
-                if (__zoneInfoCache.has(ugcId)) return __zoneInfoCache.get(ugcId);
-
-                // validate UGC format
-                const m = ugcId.match(/^([A-Z]+)(\d{3})$/);
-                if (!m) { __zoneInfoCache.set(ugcId, null); return null; }
-
-                const prefix = m[1];
-                const lastLetter = prefix[prefix.length - 1];
-                const isCounty = (lastLetter === 'C');
-
-                // County zones -> use county endpoint (keep existing behavior)
-                if (isCounty) {
-                    const url = `https://api.weather.gov/zones/county/${ugcId}`;
-                    try {
-                        const json = await getJson(url);
-                        if (json && json.properties) {
-                            const name = json.properties.name && json.properties.state ? `${json.properties.name}, ${json.properties.state}` : json.properties.name || null;
-                            __zoneInfoCache.set(ugcId, name);
-                            return name;
-                        }
-                    } catch (e) {
-                        // treat as not found
-                    }
-                    __zoneInfoCache.set(ugcId, null);
-                    return null;
-                }
-
-                // Non-county zones: try `zones/forecast` first, then fall back to `zones/fire` and return `properties.name`.
-                const forecastUrl = `https://api.weather.gov/zones/forecast/${ugcId}`;
-                try {
-                    const json = await getJson(forecastUrl);
-                    if (json && json.properties && json.properties.name) {
-                        const name = json.properties.name;
-                        __zoneInfoCache.set(ugcId, name);
-                        return name;
-                    }
-                } catch (e) {
-                    // ignore — we'll try fallback
-                }
-
-                // Fallback: zones/fire (some UGCs exist only under the fire namespace)
-                const fireUrl = `https://api.weather.gov/zones/fire/${ugcId}`;
-                try {
-                    const json = await getJson(fireUrl);
-                    if (json && json.properties && json.properties.name) {
-                        const name = json.properties.name;
-                        __zoneInfoCache.set(ugcId, name);
-                        return name;
-                    }
-                } catch (e) {
-                    // treat as not found
-                }
-
-                __zoneInfoCache.set(ugcId, null);
-                return null;
-            }
-
             // Build parsedAlerts asynchronously so we can fetch zone/county names
             let parsedAlerts = [];
             for (let idx = 0; idx < messageParts.length; idx++) {
                 const msgPart = messageParts[idx];
 
-                // --- Remove message parts that are just XML ---
                 const isPartRawXMLOnly = (
                     msgPart.trim().startsWith('<?xml') &&
                     msgPart.trim().endsWith('</alert>')
                 );
                 if (isPartRawXMLOnly) continue;
 
-                // Extract VTEC from each message part
-                let vtec = msgPart.match(/\/O\..*?\/\n?/);
-                if (!vtec) {
-                    vtec = msgPart.match(/<parameter>\s*<valueName>VTEC<\/valueName>\s*<value>(.*?)<\/value>\s*<\/parameter>/);
-                    if (vtec && vtec[1]) vtec = vtec[1];
-                }
-                if (!vtec) vtec = null;
-                let vtecObjects = vtec ? (typeof vtec === 'string' ? vtec : vtec[0]).split('.') : [];
+                // Extract VTEC from each message part using utility
+                let vtecObj = parseVTECFromPart(msgPart);
 
-                // Function to convert VTEC time to ISO UTC timestamp
-                function vtecToIso(ts) {
-                    if (!ts || typeof ts !== 'string') return null;
-                    const m = ts.match(/(\d{2})(\d{2})(\d{2})T(\d{2})(\d{2})Z/);
-                    if (!m) return null;
-                    const yy = parseInt(m[1], 10);
-                    const year = 2000 + yy;
-                    const month = parseInt(m[2], 10) - 1;
-                    const day = parseInt(m[3], 10);
-                    const hour = parseInt(m[4], 10);
-                    const minute = parseInt(m[5], 10);
-                    return new Date(Date.UTC(year, month, day, hour, minute)).toISOString();
-                }
-
-                // Build vtec object for this message part.
-                // - If a full VTEC string is present, parse all fields.
-                // - Otherwise, for true non‑VTEC minimal cleanup build a *minimal* vtec object
-                //   containing only meaningful values (eventTrackingNumber/startTime/endTime)
-                //   or set to `null` when nothing is available. This prevents empty string
-                //   fields like office/phenomena/significance from being emitted.
-                let vtecObj = null;
-                if (vtecObjects.length >= 7) {
-                    vtecObj = {
-                        product: vtecObjects[0],
-                        actions: vtecObjects[1],
-                        office: vtecObjects[2],
-                        phenomena: vtecObjects[3],
-                        significance: vtecObjects[4],
-                        eventTrackingNumber: vtecObjects[5],
-                        startTime: (parseHumanTimestampFromText(msgPart) || vtecToIso(vtecObjects[6].split('-')[0])),
-                        endTime: vtecToIso(vtecObjects[6].split('-')[1])
-                    };
-                } else {
+                if (!vtecObj) {
                     // fallback: if the main `thisObject` contains a genuine VTEC (has phenomena+significance), use it
                     if (thisObject && thisObject.phenomena && thisObject.significance) {
                         vtecObj = thisObject;
@@ -2036,27 +1266,29 @@ Louisiana out 20 to 60 NM-`;
                 // Format message with proper newline spacing (hoisted to file scope)
 
                 const formattedMessage = formatMessageNewlines(msgPart);
+                const issuedTime = (vtecObj && vtecObj.startTime) ? vtecObj.startTime : (thisObject && thisObject.startTime) || new Date().toISOString();
 
                 let alertObj = {
                     name: alertName,
                     id: (messageParts.length === 1) ? baseId : (baseId + '_' + idx),
                     sender: (vtecObj && vtecObj.office) ? vtecObj.office : (thisObject && thisObject.office) || '',
                     headline: headline,
-                    issued: (vtecObj && vtecObj.startTime) ? vtecObj.startTime : (thisObject && thisObject.startTime) || null,
+                    issued: issuedTime,
                     expiry: (vtecObj && vtecObj.endTime) ? vtecObj.endTime : ((thisObject && thisObject.endTime) ? thisObject.endTime : (capExpires || null)),
                     message: formattedMessage,
-                    ugc: [],
                     areaDesc: '',
                     properties: props
                 };
 
-                // Attach coordinates if available (either from LAT...LON line or CAP polygon/params)
+                // Attach geometry if available using utility function
                 if (coordinates && coordinates.length > 0) {
-                    alertObj.coordinates = coordinates;
+                    const geometry = createPolygonGeometry(coordinates);
+                    if (geometry) {
+                        alertObj.geometry = [geometry.coordinates];
+                    }
                 }
 
-                // If there is no meaningful headline, remove the `headline` property entirely so
-                // stored alerts don't contain empty/junk headline values (user request).
+                // If there is no meaningful headline, remove the `headline` property entirely
                 try {
                     const h = (alertObj.headline || '').toString();
                     const isJunkHeadline = !h.trim() || /^[\d\W_]+$/.test(h) || /^[0-9]{1,4}$/.test(h) || /^[A-Z0-9]{1,4}$/.test(h) || h.trim().length < 4;
@@ -2089,8 +1321,6 @@ Louisiana out 20 to 60 NM-`;
 
                 if (canonicalUgc) {
                     const ugcIds = expandUgcGroup(canonicalUgc);
-                    // store as array of individual UGC codes as requested
-                    alertObj.ugc = ugcIds;
 
                     if (ugcIds.length) {
                         // fetch all display names in parallel (cached)
@@ -2099,6 +1329,23 @@ Louisiana out 20 to 60 NM-`;
                         if (names.length) {
                             // Join multiple names with semicolon as requested
                             alertObj.areaDesc = names.join('; ');
+                        }
+                    }
+
+                    // Convert UGC -> county FIPS and attach geometry polygons
+                    const fipsIds = ugcIds.map(ugcToFips).filter(Boolean);
+                    if (fipsIds.length) {
+                        alertObj.fips = fipsIds;
+                        // Only add FIPS-based geometry if we don't already have coordinate-based geometry
+                        if (!alertObj.geometry) {
+                            const geometry = [];
+                            for (const fipsId of fipsIds) {
+                                const entry = fipsGeometry[fipsId];
+                                if (entry && Array.isArray(entry.geometry)) {
+                                    geometry.push(...entry.geometry);
+                                }
+                            }
+                            if (geometry.length) alertObj.geometry = geometry;
                         }
                     }
                 }
@@ -2128,7 +1375,6 @@ Louisiana out 20 to 60 NM-`;
                     }
                 }
 
-                // --- Extract structured eventMotionDescription from TIME...MOT...LOC if present ---
                 (function() {
                     const msgSource = (msgPart || alertObj.message || rawText || '');
                     // Example: "TIME...MOT...LOC 1349Z 246DEG 25KT 3458 9702"
@@ -2199,17 +1445,15 @@ Louisiana out 20 to 60 NM-`;
                         // keep only the top-level `eventMotionDescription` (it will be moved under `coordinates` when present)
                         alertObj.eventMotionDescription = emd;
 
-                        // If the eventMotionDescription includes a valid lat/lon and no coordinates were already
-                        // attached from LAT...LON or CAP polygon, promote it to `coordinates` so API consumers
-                        // always receive a `coordinates` property when a point is available.
+                        // If no geometry was already attached from LAT...LON or CAP polygon,
+                        // create a point geometry from the eventMotionDescription lat/lon
                         if (typeof emd.lat === 'number' && !isNaN(emd.lat) && typeof emd.lon === 'number' && !isNaN(emd.lon) &&
-                            (!alertObj.coordinates || !alertObj.coordinates.length)) {
-                            alertObj.coordinates = [[Number(emd.lat), Number(emd.lon)]];
+                            !alertObj.geometry) {
+                            alertObj.geometry = [[[[emd.lon, emd.lat]]]];
                         }
                     }
                 })();
 
-                // --- Normalize headline when message contains 'REMAINS IN EFFECT' or an 'EMERGENCY FOR' line ---
                 (function() {
                     const src = (msgPart || alertObj.message || '');
                     const emRe = /\b(TORNADO EMERGENCY FOR|FLASH FLOOD EMERGENCY FOR)\s+([A-Z0-9\-,\.\s]+)/i;
@@ -2222,9 +1466,6 @@ Louisiana out 20 to 60 NM-`;
                     }
 
                     const rieRe = /([A-Z][A-Z\s]+REMAINS IN EFFECT\s+(?:UNTIL|FROM)[^\.\n]*)/i;
-                    // also match plain "IN EFFECT ..." lines (examples: "FLOOD ADVISORY IN EFFECT UNTIL 445 PM CST THIS AFTERNOON" or
-                    // "SMALL CRAFT ADVISORY NOW IN EFFECT FROM NOON SUNDAY TO NOON AST MONDAY") — include FROM as well.
-                    // allow a short uppercase continuation on the following line (covers "...THIS AFTERNOON" on next line)
                     const inEffectRe = /([A-Z][A-Z\s]+IN EFFECT\s+(?:UNTIL|THROUGH|TO|FROM)[^\.\n]*(?:\r?\n\s*[A-Z0-9 \-]{1,80})?)/i;
                     const rieMatch = src.match(rieRe) || src.match(inEffectRe);
                     if (rieMatch) {
@@ -2234,14 +1475,12 @@ Louisiana out 20 to 60 NM-`;
                         }
                     }
                 })();
-
-                // If `eventMotionDescription` exists, ensure it is serialized directly after `coordinates`.
-                // Do NOT add the property when it does not exist — this preserves compact output.
-                if (Object.prototype.hasOwnProperty.call(alertObj, 'eventMotionDescription') && alertObj.coordinates) {
+                
+                if (Object.prototype.hasOwnProperty.call(alertObj, 'eventMotionDescription') && alertObj.geometry) {
                     const ordered = {};
                     for (const k of Object.keys(alertObj)) {
-                        if (k === 'coordinates') {
-                            ordered['coordinates'] = alertObj['coordinates'];
+                        if (k === 'geometry') {
+                            ordered['geometry'] = alertObj['geometry'];
                             ordered['eventMotionDescription'] = alertObj['eventMotionDescription'];
                         } else if (k !== 'eventMotionDescription') {
                             ordered[k] = alertObj[k];
@@ -2250,7 +1489,6 @@ Louisiana out 20 to 60 NM-`;
                     alertObj = ordered;
                 }
 
-                // --- START: build `alertinfo` object from message sections (WHAT / WHEN /WHERE / IMPACTS / threat fields) ---
                 (function() {
                     const srcText = (msgPart || alertObj.message || '');
                     const lines = String(srcText).split(/\r?\n/);
@@ -2405,9 +1643,8 @@ Louisiana out 20 to 60 NM-`;
                         if (Object.prototype.hasOwnProperty.call(ai, tk) && ai[tk]) ai[tk] = simplifyThreatValue(ai[tk]);
                     }
 
-                    alertObj.alertinfo = ai;
+                    alertObj.alertInfo = ai;
                 })();
-                // --- END: alertinfo build ---
 
                 parsedAlerts.push(alertObj);
             }
@@ -2415,46 +1652,12 @@ Louisiana out 20 to 60 NM-`;
             // Remove any null/undefined entries (in case)
             parsedAlerts = parsedAlerts.filter(Boolean);
 
-            // ===================== DEDUPLICATION LOGIC ===========================
             try {
-                let alerts = [];
-
-                try {
-                    const raw = fs.readFileSync('alerts.json', 'utf8');
-                    alerts = raw.trim() ? JSON.parse(raw) : [];
-                    if (!Array.isArray(alerts)) alerts = [];
-                } catch (readErr) {
-                    // If the file is missing or malformed, start fresh
-                    if (readErr.code !== 'ENOENT') {
-                        console.warn('alerts.json unreadable, recreating file:', readErr.message);
-                        log('alerts.json unreadable, recreating file: ' + readErr.message);
-                    }
-                    alerts = [];
-                }
-
-                // For each parsedAlert, remove any existing alert with the same id, then add the new one
-                parsedAlerts.forEach(parsedAlert => {
-                    const id = parsedAlert.id;
-                    if (id) {
-                        const removedAlerts = alerts.filter(alert => alert.id === id);
-                        if (removedAlerts.length > 0) {
-                            removedAlerts.forEach(removedAlert => {
-                                console.log(`✗ Alert removed: ${removedAlert.name} (ID: ${removedAlert.id})`);
-                                log('Alert removed: ' + removedAlert.name + ' (ID: ' + removedAlert.id + ')');
-                            });
-                        }
-                        alerts = alerts.filter(alert => alert.id !== id);
-                    }
-                    alerts.push(parsedAlert);
-                    console.log(`✓ Alert stored successfully: ${parsedAlert.name} (ID: ${parsedAlert.id})`);
-                    log('Alert stored successfully: ' + parsedAlert.name + ' (ID: ' + parsedAlert.id + ')');
-                });
-                fs.writeFileSync('alerts.json', JSON.stringify(alerts, null, 2));
+                upsertAlerts(parsedAlerts);
             } catch (err) {
                 console.error('Error updating alerts.json:', err);
                 log('Error updating alerts.json:', err);
             }
-            // ===================== END DEDUPLICATION LOGIC ===========================
         });
 
     });

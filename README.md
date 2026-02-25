@@ -35,69 +35,54 @@ You will need an NWWS-OI account, which can be requested [here](https://www.weat
 <br>
 
 ## Environment Setup
-To securely store settings and XMPP credentials, you must create a .env file in the working directory of the code.
+To securely store your XMPP credentials, you must create a .env file in the working directory of the code.
 If you don't have a NWWS-OI username and password, request one [here](https://www.weather.gov/nwws/nwws_oi_request).
 
-Fill out your `.env` file in the
- same directory as `index.js` and fill out the values.
+Fill out your `.env` file in the same directory as `index.js` and fill out the values `XMPP_USERNAME` and `XMPP_PASSWORD`.
 
+```text
+XMPP_USERNAME=XXXX.XXXX
+XMPP_PASSWORD=XXXXXXXX
+```
 
-*****
+## Configuration File
+To set your settings, add the following template code to a `config.json` in the working directory of the code.
 
-### ALLOW_NO_ORIGIN
-**Required**
-> Sets whether empty/null origins should be allowed to access the API without further authorization. `true` or `false`.
+```json
+{
+	"expressPort": 8433,
+	"allowNoOrigin": false,
+	"domainWhitelist": [
+		"https://sparkradar.app",
+		"http://localhost:5173"
+	],
+	"apiKeys": {
+		"YOUR_API_KEY": {
+			"name": "Development API Key",
+			"rateLimit": 100,
+			"whitelist": [],
+			"lastUsed": null,
+			"active": true
+		}
+	},
+	"rateLimit": {
+		"windowMs": 900,
+		"defaultMax": 30
+	},
+	"nwwsoi": {
+		"resource": "SparkAlerts NWWS Ingest Client",
+		"maxReconnectAttempts": 10,
+		"initialReconnectDelay": 2000
+	},
+	"allowNoGeometry": false,
+	"allowedAlerts": [
+		"Tornado Warning",
+		"Severe Thunderstorm Warning"
+	]
+}
+```
 
-**WARNING:** NEVER set to true in production! Always set to false unless the server will not be publicly accessible.
-
-*****
-
-### DOMAIN_WHITELIST
-*Optional*
-> A comma-separated list of domains or origins that can always be allowed to access the API without further authorization.
-
-**WARNING:** The origin of a request *can* be spoofed!
-
-*****
-
-### EXPRESS_PORT
-*Optional*
-> The HTTP port that the express webserver will run on. Default is `8433`.
-
-*****
-
-### INITIAL_RECONNECT_DELAY
-*Optional*
-> The initial delay before retrying to connect to the XMPP chatroom in case of disconnection. Increases exponentially with each retry. Value in ms. Default is `2000`.
-
-*****
-
-### MAX_RECONNECTION_ATTEMPTS
-*Optional*
-> The maximum number of retries to reconnect to the XMPP chatroom in case of disconnection before terminating. Default is `10`.
-
-*****
-
-### XMPP_RESOURCE
-*Optional*
-> A "username", or "nickname" for the client to appear as in the XMPP NWWS-OI chatroom. Default is `SparkAlerts NWWS Ingest Client`.
-
-*****
-
-### XMPP_USERNAME
-**Required**
-> Sets your NWWS-OI Username
-
-*****
-
-### XMPP_PASSWORD
-**Required**
-> Sets your NWWS-OI Password
-
-*****
-
-
-## Allowing Alerts
+## Configuration
 
 To control which alert types SparkAlerts will process, use the `allowedalerts.json` file in the project directory. This file contains a list of alert names that are permitted.
 
@@ -122,14 +107,3 @@ To control which alert types SparkAlerts will process, use the `allowedalerts.js
 **Note:** Changes to `allowedalerts.json` take effect the next time you restart the server.
 
 ---
-
-### Example
-
-```text
-XMPP_USERNAME=XXXX.XXXX
-XMPP_PASSWORD=XXXXXXXX
-
-ALLOW_NO_ORIGIN=false
-
-INITIAL_RECONNECT_DELAY=1000
-```
