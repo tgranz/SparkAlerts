@@ -81,29 +81,3 @@ To set your settings, add the following template code to a `config.json` in the 
 	]
 }
 ```
-
-## Configuration
-
-To control which alert types SparkAlerts will process, use the `allowedalerts.json` file in the project directory. This file contains a list of alert names that are permitted.
-
-### How to Allow Alerts
-
-1. Open `allowedalerts.json` in your text editor.
-2. Add or remove alert names as needed. Each alert should be a string in the JSON array.
-3. Save the file. The server will use this list to filter incoming alerts.
-
-**Example:**
-
-```json
-[
-	"Tornado Warning",
-	"Severe Thunderstorm Warning",
-	"Flood Warning"
-]
-```
-
-**Tip:** Only alerts listed in `allowedalerts.json` will be processed. To allow all alerts, include all possible alert names. To restrict, remove unwanted alert types.
-
-**Note:** Changes to `allowedalerts.json` take effect the next time you restart the server.
-
----
