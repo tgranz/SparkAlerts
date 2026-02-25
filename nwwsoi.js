@@ -321,8 +321,16 @@ try {
 
                             let earlyPairs = [];
 
-                            // 1) polygon points in info.area.polygon
-                            if (info.area) {
+                            // 1) explicit LAT...LON line in CAP XML (highest priority)
+                            const latLonRegex = /LAT\.\.\.LON\s+([0-9\s\-]+)/i;
+                            const latLonMatch = capXml.match(latLonRegex);
+                            if (latLonMatch && latLonMatch[1]) {
+                                const groups = latLonMatch[1].replace(/[^0-9\s]/g, ' ').trim().split(/\s+/).filter(g => /^\d{4}$/.test(g));
+                                for (const g of groups) earlyPairs.push(g);
+                            }
+
+                            // 2) polygon points in info.area.polygon (fallback if no LAT...LON)
+                            if (earlyPairs.length === 0 && info.area) {
                                 const areas = Array.isArray(info.area) ? info.area : [info.area];
                                 for (const a of areas) {
                                     const poly = a && (a.polygon || a.Polygon);
@@ -333,21 +341,6 @@ try {
                                         if (m) earlyPairs.push(decToUgcpair(m[1], m[2]));
                                     }
                                 }
-                            }
-
-                            // 2) decimal lat,lon anywhere in capXml
-                            const decPairRe = /(-?\d{1,2}\.\d+)[,\s]+(-?\d{1,3}\.\d+)/g;
-                            let _m;
-                            while ((_m = decPairRe.exec(capXml)) !== null) {
-                                earlyPairs.push(decToUgcpair(_m[1], _m[2]));
-                            }
-
-                            // 3) explicit LAT...LON line in CAP XML
-                            const latLonRegex = /LAT\.\.\.LON\s+([0-9\s\-]+)/i;
-                            const latLonMatch = capXml.match(latLonRegex);
-                            if (latLonMatch && latLonMatch[1]) {
-                                const groups = latLonMatch[1].replace(/[^0-9\s]/g, ' ').trim().split(/\s+/).filter(g => /^\d{4}$/.test(g));
-                                for (const g of groups) earlyPairs.push(g);
                             }
 
                             earlyPairs = Array.from(new Set(earlyPairs)).filter(g => /^\d{4}\s+\d{4,5}$/.test(g));
