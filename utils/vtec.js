@@ -20,7 +20,20 @@ function vtecToIso(ts) {
     const day = parseInt(m[3], 10);
     const hour = parseInt(m[4], 10);
     const minute = parseInt(m[5], 10);
-    return new Date(Date.UTC(year, month, day, hour, minute)).toISOString();
+    
+    // Validate the parsed values to avoid invalid dates (e.g., month=0, day=0 wraps to 1999-11-30)
+    if (month < 0 || month > 11 || day < 1 || day > 31 || hour > 23 || minute > 59) {
+        return null;
+    }
+    
+    const isoStr = new Date(Date.UTC(year, month, day, hour, minute)).toISOString();
+    // Double-check the resulting date is reasonable (not 1999 from invalid wrapping)
+    const parsedDate = new Date(isoStr);
+    if (parsedDate.getFullYear() < 2000 || parsedDate.getFullYear() > 2100) {
+        return null;
+    }
+    
+    return isoStr;
 }
 
 /**

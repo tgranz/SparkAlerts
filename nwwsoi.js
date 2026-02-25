@@ -294,7 +294,10 @@ try {
                         cleanedMsg += alert.sent ? formatSentTime(alert.sent) + '\n' : '';
                         // prefer to preserve NWSheadline in `headline` (do NOT duplicate into the message)
                         const _nwsHeadline = getParam('NWSheadline') || '';
-                        if (_nwsHeadline) capNwsHeadline = _nwsHeadline;
+                        if (_nwsHeadline) {
+                            // Strip the literal "NWSheadline" prefix if present
+                            capNwsHeadline = _nwsHeadline.replace(/^NWSheadline\s+/i, '').trim();
+                        }
                         cleanedMsg += info.description ? info.description + '\n' : '';
                         cleanedMsg += info.instruction ? info.instruction + '\n' : '';
 
@@ -1160,7 +1163,13 @@ try {
                     return false;
                 }
 
-                function normalizeHeadlineCandidate(s) { return String(s || '').replace(/\s+/g, ' ').replace(/^BULLETIN - /i, '').trim(); }
+                function normalizeHeadlineCandidate(s) {
+                    return String(s || '')
+                        .replace(/\s+/g, ' ')
+                        .replace(/^BULLETIN - /i, '')
+                        .replace(/^NWSheadline\s+/i, '')
+                        .trim();
+                }
 
                 if (capNwsHeadline && capNwsHeadline.length) {
                     // sanitize internal newlines into spaces
