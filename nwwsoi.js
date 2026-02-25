@@ -306,7 +306,7 @@ try {
                             function decToUgcpair(lat, lon) {
                                 const la = Math.round(Math.abs(Number(lat)) * 100);
                                 const lo = Math.round(Math.abs(Number(lon)) * 100);
-                                return `${String(la).padStart(4, '0')} ${String(lo)}`;
+                                return `${String(la).padStart(4, '0')} ${String(lo).padStart(4, '0')}`;
                             }
                             function ugcPairToCoord(pair) {
                                 const parts = pair.trim().split(/\s+/);
@@ -1286,7 +1286,7 @@ try {
                 if (coordinates && coordinates.length > 0) {
                     const geometry = createPolygonGeometry(coordinates);
                     if (geometry) {
-                        alertObj.geometry = [geometry.coordinates];
+                        alertObj.geometry = geometry.coordinates;
                     }
                 }
 
@@ -1451,7 +1451,7 @@ try {
                         // create a point geometry from the eventMotionDescription lat/lon
                         if (typeof emd.lat === 'number' && !isNaN(emd.lat) && typeof emd.lon === 'number' && !isNaN(emd.lon) &&
                             !alertObj.geometry) {
-                            alertObj.geometry = [[[[emd.lon, emd.lat]]]];
+                            alertObj.geometry = [[[emd.lon, emd.lat]]];
                         }
                     }
                 })();

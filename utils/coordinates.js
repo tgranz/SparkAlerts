@@ -52,7 +52,8 @@ function extractCoordinates(rawText, capCoordinates = null) {
             coordinates = standardCoordinates;
         }
     } else {
-        // Try extracting decimal coordinate pairs (e.g., "40.85,-124.07 40.84,-124.06")
+        // Try extracting decimal coordinate pairs (e.g., "40.85,-124.07 40.84,-124.06" or space-separated pairs like "41.05 -100.22 41.04 -99.02")
+        // This regex handles both comma-separated and space-separated coordinates
         const decPairRe = /(-?\d{1,2}\.\d+)[,\s]+(-?\d{1,3}\.\d+)/g;
         let m;
         const decCoords = [];
@@ -67,15 +68,17 @@ function extractCoordinates(rawText, capCoordinates = null) {
         
         if (decCoords.length > 0) {
             coordinates = decCoords;
-            console.log(`Extracted ${decCoords.length} decimal coordinate pairs`);
+            console.log(`Extracted ${decCoords.length} decimal coordinate pairs from message text`);
         } else {
             coordinates = null;
         }
     }
     
-    // If no coordinates found in text but CAP coordinates available, use them
+    // Only use capCoordinates as a fallback if absolutely nothing found in text
+    // This prevents CAP polygon coordinates from overwriting message coordinates
     if ((!coordinates || coordinates.length === 0) && Array.isArray(capCoordinates) && capCoordinates.length > 0) {
         coordinates = capCoordinates;
+        console.log(`Using ${capCoordinates.length} coordinate pairs from CAP geometry as fallback`);
     }
     
     return coordinates;
