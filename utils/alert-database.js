@@ -145,7 +145,7 @@ function upsertAlerts(parsedAlerts) {
 
             // Broadcast to SSE clients if available
             if (typeof global.broadcastAlertToSSE === 'function') {
-                global.broadcastAlertToSSE(parsedAlert.id, parsedAlert.name);
+                global.broadcastAlertToSSE(parsedAlert);
             }
         });
 

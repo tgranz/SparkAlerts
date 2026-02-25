@@ -261,8 +261,31 @@ app.use(apiRateLimiter)
 // Server-Sent Events (SSE) setup - manage subscribed clients
 const sseClients = new Set();
 
-function broadcastAlertToSSE(alertId, alertName) {
-    const message = `data: ${JSON.stringify({ id: alertId, name: alertName })}\n\n`;
+function broadcastAlertToSSE(alertObject) {
+    // If called with old arguments (id, name as separate params), handle gracefully
+    let alertData;
+    if (typeof alertObject === 'string') {
+        // Legacy call: broadcastAlertToSSE(alertId, alertName)
+        alertData = {
+            id: alertObject,
+            name: arguments[1] || 'Unknown Alert'
+        };
+    } else {
+        // New call: broadcastAlertToSSE(completeAlertObject)
+        alertData = {
+            id: alertObject.id,
+            name: alertObject.name,
+            sender: alertObject.sender,
+            headline: alertObject.headline,
+            areaDesc: alertObject.areaDesc,
+            issued: alertObject.issued,
+            expiry: alertObject.expiry,
+            properties: alertObject.properties,
+            alertInfo: alertObject.alertInfo
+        };
+    }
+    
+    const message = `data: ${JSON.stringify(alertData)}\n\n`;
     sseClients.forEach(res => {
         try {
             res.write(message);
