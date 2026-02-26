@@ -26,6 +26,8 @@ export default class API {
 
         // Endpoint to get all active alerts
         this.app.get('/alerts', (req, res) => {
+            // Set CORS header to allow cross-origin requests
+            res.setHeader('Access-Control-Allow-Origin', '*');
             // Return all alerts from the database
             res.json({ alerts: readAlertDatabase() });
         });
