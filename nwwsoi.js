@@ -136,7 +136,7 @@ export default class NWWSOI {
                 // Check alert action from VTEC
                 if (vtec) {
                     // If no VETC we will default to "NEW"
-                    const action = vtec.action || 'NEW';
+                    const action = vtec.actionCode || 'NEW';
 
                     // NEW = New event
                     // CON = Continuation (same event, updated information)
