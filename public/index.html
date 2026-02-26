@@ -1,0 +1,707 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>SparkAlerts Dashboard</title>
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.css" />
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.js"></script>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, sans-serif;
+            background: linear-gradient(135deg, #1e3c72 0%, #2a5298 100%);
+            min-height: 100vh;
+            padding: 20px;
+            color: #333;
+        }
+
+        .container {
+            max-width: 1400px;
+            margin: 0 auto;
+        }
+
+        header {
+            background: white;
+            border-radius: 12px;
+            padding: 30px;
+            margin-bottom: 30px;
+            box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            flex-wrap: wrap;
+            gap: 20px;
+        }
+
+        h1 {
+            font-size: 28px;
+            color: #1e3c72;
+            display: flex;
+            align-items: center;
+            gap: 10px;
+        }
+
+        .status {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            font-size: 14px;
+        }
+
+        .status-indicator {
+            width: 12px;
+            height: 12px;
+            border-radius: 50%;
+            animation: pulse 2s infinite;
+        }
+
+        .status-indicator.connected {
+            background: #10b981;
+        }
+
+        .status-indicator.disconnected {
+            background: #ef4444;
+            animation: none;
+        }
+
+        @keyframes pulse {
+            0%, 100% { opacity: 1; }
+            50% { opacity: 0.5; }
+        }
+
+        .stats {
+            display: flex;
+            gap: 20px;
+            flex-wrap: wrap;
+        }
+
+        .stat {
+            background: #f3f4f6;
+            padding: 12px 16px;
+            border-radius: 8px;
+            font-size: 14px;
+            font-weight: 500;
+        }
+
+        .stat-number {
+            color: #1e3c72;
+            font-size: 20px;
+            font-weight: bold;
+            display: block;
+        }
+
+        .alerts-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fill, minmax(350px, 1fr));
+            gap: 20px;
+            margin-bottom: 30px;
+        }
+
+        .alert-card {
+            background: white;
+            border-radius: 12px;
+            padding: 20px;
+            box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
+            border-left: 5px solid;
+            animation: slideIn 0.3s ease-out;
+            transition: transform 0.2s, box-shadow 0.2s;
+        }
+
+        .alert-card:hover {
+            transform: translateY(-4px);
+            box-shadow: 0 8px 12px rgba(0, 0, 0, 0.15);
+        }
+
+        @keyframes slideIn {
+            from {
+                opacity: 0;
+                transform: translateY(10px);
+            }
+            to {
+                opacity: 1;
+                transform: translateY(0);
+            }
+        }
+
+        .alert-card.warning {
+            border-left-color: #ea580c;
+            background: #fff7ed;
+        }
+
+        .alert-card.watch {
+            border-left-color: #f59e0b;
+            background: #fffbeb;
+        }
+
+        .alert-card.advisory {
+            border-left-color: #3b82f6;
+            background: #eff6ff;
+        }
+
+        .alert-card.statement {
+            border-left-color: #8b5cf6;
+            background: #faf5ff;
+        }
+
+        .alert-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: start;
+            margin-bottom: 12px;
+        }
+
+        .alert-title {
+            font-size: 16px;
+            font-weight: 600;
+            flex: 1;
+        }
+
+        .alert-severity {
+            display: inline-block;
+            padding: 4px 8px;
+            border-radius: 4px;
+            font-size: 12px;
+            font-weight: bold;
+            white-space: nowrap;
+            margin-left: 10px;
+        }
+
+        .alert-severity.W {
+            background: #ea580c;
+            color: white;
+        }
+
+        .alert-severity.A {
+            background: #f59e0b;
+            color: white;
+        }
+
+        .alert-severity.Y {
+            background: #3b82f6;
+            color: white;
+        }
+
+        .alert-severity.S {
+            background: #8b5cf6;
+            color: white;
+        }
+
+        .alert-meta {
+            display: flex;
+            gap: 15px;
+            margin-bottom: 12px;
+            flex-wrap: wrap;
+            font-size: 13px;
+            color: #666;
+        }
+
+        .alert-meta-item {
+            display: flex;
+            flex-direction: column;
+        }
+
+        .alert-meta-label {
+            font-weight: 600;
+            color: #999;
+            font-size: 11px;
+            text-transform: uppercase;
+        }
+
+        .alert-zones {
+            background: #f9fafb;
+            padding: 8px;
+            border-radius: 6px;
+            font-size: 12px;
+            margin-bottom: 12px;
+            color: #555;
+            word-break: break-all;
+            font-family: monospace;
+        }
+
+        .alert-message {
+            font-size: 13px;
+            line-height: 1.6;
+            color: #666;
+            display: -webkit-box;
+            -webkit-line-clamp: 3;
+            -webkit-box-orient: vertical;
+            overflow: hidden;
+        }
+
+        .alert-time {
+            font-size: 12px;
+            color: #999;
+            margin-top: 10px;
+        }
+
+        .empty-state {
+            text-align: center;
+            padding: 60px 20px;
+            color: white;
+        }
+
+        .empty-state-icon {
+            font-size: 48px;
+            margin-bottom: 20px;
+        }
+
+        .empty-state h2 {
+            font-size: 24px;
+            margin-bottom: 10px;
+        }
+
+        .empty-state p {
+            font-size: 16px;
+            opacity: 0.9;
+        }
+
+        footer {
+            text-align: center;
+            color: white;
+            font-size: 12px;
+            margin-top: 40px;
+            padding-top: 20px;
+            border-top: 1px solid rgba(255, 255, 255, 0.1);
+            opacity: 0.8;
+        }
+
+        .main-content {
+            display: grid;
+            grid-template-columns: 1fr 400px;
+            gap: 20px;
+            margin-bottom: 30px;
+        }
+
+        #map {
+            height: 600px;
+            border-radius: 12px;
+            box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
+            z-index: 1;
+        }
+
+        .alerts-sidebar {
+            display: flex;
+            flex-direction: column;
+        }
+
+        .alerts-list-container {
+            background: white;
+            border-radius: 12px;
+            padding: 20px;
+            box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
+            overflow-y: auto;
+            max-height: 600px;
+        }
+
+        .alerts-list-title {
+            font-size: 16px;
+            font-weight: 600;
+            color: #1e3c72;
+            margin-bottom: 15px;
+            padding-bottom: 10px;
+            border-bottom: 2px solid #f3f4f6;
+        }
+
+        .alert-list-item {
+            padding: 10px;
+            margin-bottom: 8px;
+            border-left: 4px solid;
+            border-radius: 4px;
+            cursor: pointer;
+            font-size: 12px;
+            transition: all 0.2s;
+        }
+
+        .alert-list-item:hover {
+            background: #f9fafb;
+            transform: translateX(4px);
+        }
+
+        .alert-list-item.warning {
+            border-left-color: #ea580c;
+            background: #fff7ed;
+        }
+
+        .alert-list-item.watch {
+            border-left-color: #f59e0b;
+            background: #fffbeb;
+        }
+
+        .alert-list-item.advisory {
+            border-left-color: #3b82f6;
+            background: #eff6ff;
+        }
+
+        .alert-list-item.statement {
+            border-left-color: #8b5cf6;
+            background: #faf5ff;
+        }
+
+        .alert-list-item-title {
+            font-weight: 600;
+            color: #1e3c72;
+            margin-bottom: 4px;
+        }
+
+        .alert-list-item-meta {
+            color: #666;
+            font-size: 11px;
+        }
+
+        @media (max-width: 1200px) {
+            .main-content {
+                grid-template-columns: 1fr;
+            }
+
+            #map {
+                height: 400px;
+            }
+
+            .alerts-list-container {
+                max-height: 300px;
+            }
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <header>
+            <h1>SparkAlerts</h1>
+            <div class="stats">
+                <div class="stat">
+                    <span class="stat-number" id="alert-count">0</span>
+                    <span>Active Alerts</span>
+                </div>
+                <div class="stat">
+                    <span class="status">
+                        <span class="status-indicator connected" id="status-indicator"></span>
+                        <span id="status-text">Connected</span>
+                    </span>
+                </div>
+            </div>
+        </header>
+
+        <div class="main-content">
+            <div id="map"></div>
+            <div class="alerts-sidebar">
+                <div class="alerts-list-container">
+                    <div class="alerts-list-title">Alerts List</div>
+                    <div id="alerts-list"></div>
+                </div>
+            </div>
+        </div>
+
+        <div id="alerts-grid-container"></div>
+
+        <footer>
+            <p>NWWS-OI Alert Dashboard | Real-time weather alerts from National Weather Service</p>
+        </footer>
+    </div>
+
+    <script>
+        class AlertsDashboard {
+            constructor() {
+                this.alerts = new Map();
+                this.eventSource = null;
+                this.map = null;
+                this.layers = new Map(); // Store map layers for each alert
+                this.init();
+            }
+
+            async init() {
+                // Initialize map
+                this.initMap();
+                // Load initial alerts
+                await this.loadAlerts();
+                // Connect to SSE stream
+                this.connectSSE();
+            }
+
+            initMap() {
+                // Create map centered on US
+                this.map = L.map('map').setView([39.8, -98.6], 4);
+
+                // Add tile layer
+                L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+                    attribution: '© OpenStreetMap contributors',
+                    maxZoom: 19,
+                    className: 'map-tiles'
+                }).addTo(this.map);
+
+                // Create feature group for alerts
+                this.alertsGroup = L.featureGroup().addTo(this.map);
+
+                // Initialize notification sound
+                this.notificationSound = new Audio('/ding.mp3');
+                this.notificationSound.preload = 'auto';
+                this.notificationSound.volume = 1.0;
+            }
+
+            async loadAlerts() {
+                try {
+                    const response = await fetch('/alerts');
+                    const data = await response.json();
+                    const alertsData = data.alerts || {};
+                    
+                    // Ensure each alert has an ID
+                    for (const [key, alert] of Object.entries(alertsData)) {
+                        alert.id = alert.id || key || `${alert?.vtec?.officeId || ''}-${alert.awipsId}`;
+                    }
+                    
+                    this.alerts = new Map(Object.entries(alertsData));
+                    this.render();
+                } catch (err) {
+                    console.error('Failed to load alerts:', err);
+                }
+            }
+
+            connectSSE() {
+                this.eventSource = new EventSource('/subscribe');
+
+                this.eventSource.addEventListener('NEW', (event) => {
+                    const alert = JSON.parse(event.data);
+                    alert.id = alert.id || `${alert?.vtec?.officeId || ''}-${alert.awipsId}`;
+                    this.alerts.set(alert.id, alert);
+                    this.playNotificationSound();
+                    // Re-fetch all alerts from API to ensure we have complete data
+                    this.loadAlerts();
+                });
+
+                this.eventSource.addEventListener('UPDATE', (event) => {
+                    const alert = JSON.parse(event.data);
+                    alert.id = alert.id || `${alert?.vtec?.officeId || ''}-${alert.awipsId}`;
+                    this.alerts.set(alert.id, alert);
+                    this.render();
+                });
+
+                this.eventSource.addEventListener('error', (err) => {
+                    console.error('SSE error:', err);
+                    this.setStatus(false);
+                    // Attempt reconnect after 5 seconds
+                    setTimeout(() => this.connectSSE(), 5000);
+                });
+
+                this.setStatus(true);
+            }
+
+            playNotificationSound() {
+                try {
+                    // Reset audio to beginning
+                    this.notificationSound.currentTime = 0;
+                    // Ensure volume is set
+                    this.notificationSound.volume = 1.0;
+                    // Play sound
+                    const playPromise = this.notificationSound.play();
+                    if (playPromise !== undefined) {
+                        playPromise.catch(err => {
+                            console.warn('Could not play notification sound:', err);
+                        });
+                    }
+                } catch (err) {
+                    console.warn('Error playing notification:', err);
+                }
+            }
+
+            setStatus(connected) {
+                const indicator = document.getElementById('status-indicator');
+                const text = document.getElementById('status-text');
+                if (connected) {
+                    indicator.className = 'status-indicator connected';
+                    text.textContent = 'Connected';
+                } else {
+                    indicator.className = 'status-indicator disconnected';
+                    text.textContent = 'Disconnected';
+                }
+            }
+
+            getSeverityClass(significance) {
+                const severityMap = {
+                    'W': 'warning',
+                    'A': 'watch',
+                    'Y': 'advisory',
+                    'S': 'statement'
+                };
+                return severityMap[significance] || 'statement';
+            }
+
+            formatTime(isoTime) {
+                const date = new Date(isoTime);
+                const now = new Date();
+                const diff = now - date;
+                
+                if (diff < 60000) {
+                    return 'Just now';
+                } else if (diff < 3600000) {
+                    const mins = Math.floor(diff / 60000);
+                    return `${mins}m ago`;
+                } else if (diff < 86400000) {
+                    const hours = Math.floor(diff / 3600000);
+                    return `${hours}h ago`;
+                } else {
+                    return date.toLocaleDateString() + ' ' + date.toLocaleTimeString();
+                }
+            }
+
+            render() {
+                const countEl = document.getElementById('alert-count');
+                countEl.textContent = this.alerts.size;
+
+                this.renderAlertsList();
+                this.updateMap();
+            }
+
+            renderAlertsList() {
+                const listContainer = document.getElementById('alerts-list');
+                
+                if (this.alerts.size === 0) {
+                    listContainer.innerHTML = '<div style="color: #999; text-align: center; padding: 20px;">No active alerts</div>';
+                    return;
+                }
+
+                const alertsHtml = Array.from(this.alerts.values())
+                    .sort((a, b) => new Date(b.recievedAt) - new Date(a.recievedAt))
+                    .map(alert => this.createAlertListItem(alert))
+                    .join('');
+
+                listContainer.innerHTML = alertsHtml;
+            }
+
+            createAlertListItem(alert) {
+                const significanceClass = this.getSeverityClass(alert.vtec?.significance || 'S');
+                const issued = this.formatTime(alert.recievedAt);
+
+                return `
+                    <div class="alert-list-item ${significanceClass}" onclick="dashboard.highlightAlert('${alert.id}')">
+                        <div class="alert-list-item-title">${alert.productName || 'Alert'}</div>
+                        <div class="alert-list-item-meta">${alert?.vtec?.officeId || ''} - ${issued}</div>
+                    </div>
+                `;
+            }
+
+            updateMap() {
+                // Clear previous layers
+                this.alertsGroup.clearLayers();
+                this.layers.clear();
+
+                // Add layers for each alert
+                Array.from(this.alerts.values()).forEach(alert => {
+                    if (alert.geometry) {
+                        const layer = this.createGeometryLayer(alert);
+                        if (layer) {
+                            this.layers.set(alert.id, layer);
+                            this.alertsGroup.addLayer(layer);
+                        }
+                    }
+                });
+
+                // Fit map to bounds if there are alerts
+                if (this.alertsGroup.getLayers().length > 0) {
+                    this.map.fitBounds(this.alertsGroup.getBounds(), { padding: [50, 50] });
+                }
+            }
+
+            createGeometryLayer(alert) {
+                const geometry = alert.geometry;
+                const significance = alert.vtec?.significance || 'S';
+                
+                // Determine color based on significance
+                const colorMap = {
+                    'W': '#ea580c', // Warning - red/orange
+                    'A': '#f59e0b', // Watch - amber
+                    'Y': '#3b82f6', // Advisory - blue
+                    'S': '#8b5cf6'  // Statement - purple
+                };
+
+                const color = colorMap[significance] || '#8b5cf6';
+
+                let layer = null;
+
+                if (geometry.type === 'Polygon') {
+                    const coordinates = geometry.coordinates[0].map(coord => [coord[1], coord[0]]); // Convert to [lat, lon]
+                    layer = L.polygon(coordinates, {
+                        color: color,
+                        weight: 2,
+                        opacity: 0.8,
+                        fillOpacity: 0.2,
+                        fillColor: color
+                    });
+                } else if (geometry.type === 'Point') {
+                    const [lng, lat] = geometry.coordinates;
+                    layer = L.circleMarker([lat, lng], {
+                        radius: 8,
+                        color: color,
+                        weight: 2,
+                        opacity: 0.8,
+                        fillColor: color,
+                        fillOpacity: 0.2
+                    });
+                }
+
+                if (layer) {
+                    layer.bindPopup(`
+                        <strong>${alert.productName}</strong><br/>
+                        Office: ${alert?.vtec?.officeId || ''}<br/>
+                        Phenomena: ${alert.vtec?.phenomena || 'N/A'}<br/>
+                        Severity: ${significance}
+                    `);
+                }
+
+                return layer;
+            }
+
+            highlightAlert(alertId) {
+                const layer = this.layers.get(alertId);
+                if (layer) {
+                    layer.setStyle({ weight: 4, opacity: 1 });
+                    if (layer instanceof L.Polygon) {
+                        layer.setStyle({ fillOpacity: 0.4 });
+                    }
+                    layer.openPopup();
+                }
+            }
+
+            createAlertCard(alert) {
+                const significanceClass = this.getSeverityClass(alert.vtec?.significance || 'S');
+                const zones = alert.zoneIds ? alert.zoneIds.join(', ') : 'N/A';
+                const message = alert.productMessage || 'No message content';
+                const issued = this.formatTime(alert.recievedAt);
+
+                return `
+                    <div class="alert-card ${significanceClass}">
+                        <div class="alert-header">
+                            <div class="alert-title">${alert.productName || 'Alert'}</div>
+                            <span class="alert-severity ${alert.vtec?.significance || 'S'}">${alert.vtec?.significance || 'N/A'}</span>
+                        </div>
+                        
+                        <div class="alert-meta">
+                            <div class="alert-meta-item">
+                                <span class="alert-meta-label">Office</span>
+                                <span>${alert?.vtec?.officeId || ''}</span>
+                            </div>
+                            <div class="alert-meta-item">
+                                <span class="alert-meta-label">Phenomena</span>
+                                <span>${alert.vtec?.phenomena || 'Unknown'}</span>
+                            </div>
+                        </div>
+
+                        ${zones !== 'N/A' ? `<div class="alert-zones"><strong>Zones:</strong> ${zones}</div>` : ''}
+                        
+                        <div class="alert-message">${message}</div>
+                        
+                        <div class="alert-time">Issued ${issued}</div>
+                    </div>
+                `;
+            }
+        }
+
+        // Initialize dashboard
+        const dashboard = new AlertsDashboard();
+    </script>
+</body>
+</html>

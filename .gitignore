@@ -1,7 +1,5 @@
-SparkAlerts.code-workspace
-.vscode/
+/node_modules
 .env
-node_modules/
-service.log
-alerts.json
+/demo
 config.json
+alerts.json
