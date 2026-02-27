@@ -150,8 +150,8 @@ export default class NWWSOI {
                     // ROU = Routine message (uncommon)
 
                     if (action === 'CAN' || action === 'EXP') {
-                        // Cancellation or Expiration - remove this alert from the database
-                        deleteAlert(parser.getProperty('id'), parser.getProperty('vtec')?.eventTrackingNumber);
+                        // Cancellation or Expiration - remove this alert from the database with the same event tracking number
+                        deleteAlert(parser.getProperty('vtec')?.eventTrackingNumber || null);
                         callbacks.onUpdate();
                         return;
                     } else if (action === 'ROU') {

@@ -52,7 +52,7 @@ function deleteAlert(id, eventTrackingNumber) {
     // Try to find by ID, if not found, try to find by VTEC event tracking number
     try {
         const alerts = readAlertDatabase();
-        let updatedAlerts = alerts.filter(alert => (alert.id !== 'null-null' && alert.id !== id) || (eventTrackingNumber && alert.vtec?.eventTrackingNumber !== eventTrackingNumber));
+        let updatedAlerts = alerts.filter(alert => eventTrackingNumber && alert.vtec?.eventTrackingNumber !== eventTrackingNumber);
 
         if (updatedAlerts.length === alerts.length && eventTrackingNumber) {
             updatedAlerts = alerts.filter(alert => alert.vtec?.eventTrackingNumber !== eventTrackingNumber);
