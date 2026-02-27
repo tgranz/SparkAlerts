@@ -252,22 +252,37 @@ export default class WMOParser {
             }
 
             const expireTimeStr = zoneExpireMatch[2]; // DDHHKK string
-            const day = expireTimeStr.slice(0, 2);
-            const hour = expireTimeStr.slice(2, 4);
-            const minute = expireTimeStr.slice(4, 6);
+            const day = parseInt(expireTimeStr.slice(0, 2), 10);
+            const hour = parseInt(expireTimeStr.slice(2, 4), 10);
+            const minute = parseInt(expireTimeStr.slice(4, 6), 10);
 
             // Extract timezone from product message (e.g., "210 PM CST")
             const tzMatch = this.productMessage.match(/\d{1,2}:\d{2}\s+[AP]M\s+([A-Z]{3,4})/);
             const tzCode = tzMatch ? tzMatch[1] : null;
             const offset = this._getTimezoneOffset(tzCode);
 
-            // Get year and month from issued time
+            // Convert issued UTC time to local time to get the correct local date
             const issuedDate = new Date(this.issuedAt);
-            const year = issuedDate.getUTCFullYear();
-            const monthNum = issuedDate.getUTCMonth() + 1;
+            const issuedUtcMs = issuedDate.getTime();
+            const issuedLocalMs = issuedUtcMs - (offset * 3600000);  // Subtract offset to convert UTC to local
+            const issuedLocal = new Date(issuedLocalMs);
+            
+            let year = issuedLocal.getUTCFullYear();
+            let month = issuedLocal.getUTCMonth();  // 0-indexed
+            const issuedDay = issuedLocal.getUTCDate();
+            
+            // If expiration day is less than issued day, it's in the next month
+            if (day < issuedDay) {
+                month += 1;
+                if (month > 11) {
+                    month = 0;
+                    year += 1;
+                }
+            }
 
-            // Create UTC date from the parsed components, then add the offset
-            const utcMs = Date.UTC(year, monthNum - 1, parseInt(day), parseInt(hour), parseInt(minute), 0) + (offset * 3600000);
+            // Create local datetime and convert to UTC
+            const localMs = Date.UTC(year, month, day, hour, minute, 0);
+            const utcMs = localMs + (offset * 3600000);  // Add offset to convert local to UTC
             const utcDate = new Date(utcMs);
             
             return utcDate.toISOString();
@@ -290,14 +305,19 @@ export default class WMOParser {
 
             const offset = this._getTimezoneOffset(tzCode);
             
-            // Get year, month, day from issued time
+            // Convert issued UTC time to local time to get the correct local date
             const issuedDate = new Date(this.issuedAt);
-            const year = issuedDate.getUTCFullYear();
-            const monthNum = issuedDate.getUTCMonth() + 1;
-            const dayNum = issuedDate.getUTCDate();
+            const issuedUtcMs = issuedDate.getTime();
+            const issuedLocalMs = issuedUtcMs - (offset * 3600000);  // Subtract offset to convert UTC to local
+            const issuedLocal = new Date(issuedLocalMs);
             
-            // Create UTC date and add offset
-            const utcMs = Date.UTC(year, monthNum - 1, dayNum, hour, minute, 0) + (offset * 3600000);
+            const year = issuedLocal.getUTCFullYear();
+            const monthNum = issuedLocal.getUTCMonth() + 1;
+            const dayNum = issuedLocal.getUTCDate();
+            
+            // Create local datetime and convert to UTC
+            const localMs = Date.UTC(year, monthNum - 1, dayNum, hour, minute, 0);
+            const utcMs = localMs + (offset * 3600000);  // Add offset to convert local to UTC
             const utcDate = new Date(utcMs);
             
             return utcDate.toISOString();
