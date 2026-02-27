@@ -151,8 +151,16 @@ export default class NWWSOI {
 
                     if (action === 'CAN' || action === 'EXP') {
                         // Cancellation or Expiration - remove this alert from the database with the same event tracking number
-                        deleteAlert(parser.getProperty('vtec')?.eventTrackingNumber || null);
-                        callbacks.onUpdate();
+                        try {
+                            deleteAlert(parser.getProperty('vtec')?.eventTrackingNumber || null);
+                            callbacks.onUpdate();
+                        } catch (err) {
+                            if (err.message.includes('Alert not found')) {
+                                console.warn('Attempted to delete alert that does not exist in database:', err.message);
+                            } else {
+                                console.error('Error deleting alert from database:', err.message);
+                            }
+                        }
                         return;
                     } else if (action === 'ROU') {
                         return; // Ignore routine messages as they are not actual alerts

@@ -48,14 +48,17 @@ function checkAndRemoveExpiredAlerts() {
     }
 }
 
-function deleteAlert(id, eventTrackingNumber) {
-    // Try to find by ID, if not found, try to find by VTEC event tracking number
+function deleteAlert(eventTrackingNumber) {
     try {
-        const alerts = readAlertDatabase();
-        let updatedAlerts = alerts.filter(alert => eventTrackingNumber && alert.vtec?.eventTrackingNumber !== eventTrackingNumber);
+        if (!eventTrackingNumber) {
+            throw new Error('Cannot delete alert: eventTrackingNumber is required');
+        }
 
-        if (updatedAlerts.length === alerts.length && eventTrackingNumber) {
-            updatedAlerts = alerts.filter(alert => alert.vtec?.eventTrackingNumber !== eventTrackingNumber);
+        const alerts = readAlertDatabase();
+        const updatedAlerts = alerts.filter(alert => alert.vtec?.eventTrackingNumber !== eventTrackingNumber);
+
+        if (updatedAlerts.length === alerts.length) {
+            throw new Error(`Alert not found with eventTrackingNumber ${eventTrackingNumber}`);
         }
 
         fs.writeFileSync('alerts.json', JSON.stringify(updatedAlerts), 'utf8');
