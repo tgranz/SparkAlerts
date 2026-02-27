@@ -111,11 +111,56 @@ function updateAlert(eventTrackingNumber, updatedData) {
     }
 }
 
+function cancelAlert(eventTrackingNumber, updatedData) {
+    // Find alert by ETC
+    try {
+        if (!eventTrackingNumber) {
+            throw new Error('Cannot cancel alert: eventTrackingNumber is required');
+        }
+
+        const alerts = readAlertDatabase();
+        let alertFound = false;
+
+        const updatedAlerts = alerts.map(alert => {
+            if (alert.vtec?.eventTrackingNumber === eventTrackingNumber) {
+                alertFound = true;
+                console.log(`Cancelling alert with eventTrackingNumber ${eventTrackingNumber}`);
+                return { 
+                    id: alert.id,
+                    productCode: alert.productCode,
+                    productName: alert.productName,
+                    receivedAt: alert.receivedAt,
+                    expiresAt: alert.expiresAt,
+                    nwsOffice: alert.nwsOffice,
+                    vtec: updatedData.vtec,
+                    message: updatedData.message + "\n\n" + alert.message, // Prepend cancellation message to original message
+                    geometry: updatedData.geometry, // Use updated geometry
+                    properties: {
+                        isPds: updatedData.properties?.isPds || false,
+                        isConsiderable: updatedData.properties?.isConsiderable || false,
+                        isDestructive: updatedData.properties?.isDestructive || false,
+                    }
+                 };
+            }
+            return alert;
+        });
+
+        if (!alertFound) {
+            throw new Error(`Alert not found with eventTrackingNumber ${eventTrackingNumber}`);
+        }
+
+        fs.writeFileSync('alerts.json', JSON.stringify(updatedAlerts), 'utf8');
+    } catch (err) {
+        throw new Error('Error canceling alert: ' + err.message);
+    }
+}
+
 // Export the database functions
 export {
     readAlertDatabase,
     addNewAlert,
     checkAndRemoveExpiredAlerts,
     deleteAlert,
-    updateAlert
+    updateAlert,
+    cancelAlert
 };

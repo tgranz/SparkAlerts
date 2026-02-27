@@ -13,7 +13,8 @@ import CAPParser from './parsers/cap_parser.js';
 import WMOParser from './parsers/wmo_parser.js';
 
 // Import database worker
-import { addNewAlert, deleteAlert, updateAlert } from './database.js';
+import { addNewAlert, deleteAlert, updateAlert, cancelAlert } from './database.js';
+import { act } from 'react';
 
 // Function to check if message is a CAP message based on TTAII code
 function isCapMessage(ttaaii) {
@@ -149,8 +150,8 @@ export default class NWWSOI {
                     // COR = Correction
                     // ROU = Routine message (uncommon)
 
-                    if (action === 'CAN' || action === 'EXP') {
-                        // Cancellation or Expiration - remove this alert from the database with the same event tracking number
+                    if (action === 'EXP') {
+                        // Expiration - remove this alert from the database with the same event tracking number
                         try {
                             deleteAlert(parser.getProperty('vtec')?.eventTrackingNumber || null);
                             callbacks.onUpdate();
@@ -162,6 +163,18 @@ export default class NWWSOI {
                             }
                         }
                         return;
+                    } else if (action === 'CAN') {
+                        // Cancellation - Append cancellation message, update geometry, but keep everything else
+                        const eventTrackingNumber = parser.getProperty('vtec')?.eventTrackingNumber;
+                        console.log(`Attempting to cancel alert with eventTrackingNumber: ${eventTrackingNumber}`);
+                        try {
+                            cancelAlert(eventTrackingNumber, alertData);
+                            callbacks.onUpdate();
+                            return;
+                        } catch (err) {
+                            console.warn('Failed to cancel alert:', err.message, '- Adding as new alert instead');
+                            // Fall through to add as new alert
+                        }
                     } else if (action === 'ROU') {
                         return; // Ignore routine messages as they are not actual alerts
                     } else if (action !== 'NEW') {
