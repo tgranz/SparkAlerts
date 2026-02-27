@@ -67,12 +67,17 @@ function deleteAlert(id, eventTrackingNumber) {
 function updateAlert(eventTrackingNumber, updatedData) {
     // Always use ETC to identify alert
     try {
+        if (!eventTrackingNumber) {
+            throw new Error('Cannot update alert: eventTrackingNumber is required');
+        }
+
         const alerts = readAlertDatabase();
         let alertFound = false;
 
         const updatedAlerts = alerts.map(alert => {
-            if (eventTrackingNumber && alert.vtec?.eventTrackingNumber === eventTrackingNumber) {
+            if (alert.vtec?.eventTrackingNumber === eventTrackingNumber) {
                 alertFound = true;
+                console.log(`Updating alert with eventTrackingNumber ${eventTrackingNumber}`);
                 return { 
                     id: alert.id,
                     productCode: alert.productCode,
@@ -94,7 +99,7 @@ function updateAlert(eventTrackingNumber, updatedData) {
         });
 
         if (!alertFound) {
-            throw new Error('Alert not found for update');
+            throw new Error(`Alert not found with eventTrackingNumber ${eventTrackingNumber}`);
         }
 
         fs.writeFileSync('alerts.json', JSON.stringify(updatedAlerts), 'utf8');

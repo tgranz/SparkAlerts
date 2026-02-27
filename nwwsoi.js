@@ -158,9 +158,16 @@ export default class NWWSOI {
                         return; // Ignore routine messages as they are not actual alerts
                     } else if (action !== 'NEW') {
                         // Some sort of update - update the existing alert in the database with new information
-                        updateAlert(parser.getProperty('vtec')?.eventTrackingNumber, alertData);
-                        callbacks.onUpdate();
-                        return;
+                        const eventTrackingNumber = parser.getProperty('vtec')?.eventTrackingNumber;
+                        console.log(`Attempting to ${action} alert with eventTrackingNumber: ${eventTrackingNumber}`);
+                        try {
+                            updateAlert(eventTrackingNumber, alertData);
+                            callbacks.onUpdate();
+                            return;
+                        } catch (err) {
+                            console.warn('Failed to update alert:', err.message, '- Adding as new alert instead');
+                            // Fall through to add as new alert
+                        }
                     }
                 }
 
