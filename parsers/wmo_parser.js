@@ -8,7 +8,7 @@ const awipsIdRegex = /^[A-Z0-9]{6}\s*\n\s*\n\s*([A-Z]{2,}[A-Z0-9]*)/m;
 const productNameRegex = /\n\n([A-Z][A-Z\s]+[A-Z])\n/;
 const zoneIdsRegex = /[A-Z]{2}Z\d{3}/g;
 const productMessageRegex = /\d{1,2}:\d{2} [AP]M [A-Z]{3,4} .+? \d{4}\s+(?:[\s\S]*?\d{1,2}:\d{2} [AP]M [A-Z]{3,4} .+? \d{4}\s+)?([\s\S]+?)\$\$/;
-const vtecRegex = /(\/.+?\.\d+\.\d{6}T\d{4}Z-\d{6}T\d{4}Z\/)/;
+const vtecRegex = /(\/[^/]+?\.\d+\.\d{6}T\d{4}Z-\d{6}T\d{4}Z\/)/g;
 
 // Storm tracking parameters
 const latLonRegex = /LAT\.{3}LON((?:\s+\d{4})+)/;
@@ -39,15 +39,21 @@ export default class WMOParser {
         this.productSize = sizeMatch ? sizeMatch[1] : null;
 
         // Extract VTEC if present
-        const vtecMatch = this.productMessage.match(vtecRegex);
-        if (vtecMatch) {
-            try {
-                this.vtec = parseVTEC(vtecMatch[1]);
-            } catch (err) {
-                this.vtec = null;
-            }
+        const vtecMatches = Array.from(this.productMessage.matchAll(vtecRegex));
+        if (vtecMatches.length > 0) {
+            const parsedVtec = vtecMatches.map((match) => {
+                try {
+                    return parseVTEC(match[1]);
+                } catch {
+                    return null;
+                }
+            }).filter(Boolean);
+
+            this.vtecList = parsedVtec;
+            this.vtec = this._selectPrimaryVtec(parsedVtec);
         } else {
             this.vtec = null;
+            this.vtecList = [];
         }
 
         // Line 2 example: WWAK81 PAFC 261815
@@ -155,6 +161,17 @@ export default class WMOParser {
         // Extract TORNADO
         const tornadoMatch = rawMessage.match(tornadoRegex);
         this.tornado = tornadoMatch ? tornadoMatch[1] : null;
+    }
+
+    _selectPrimaryVtec(vtecList) {
+        if (!Array.isArray(vtecList) || vtecList.length === 0) {
+            return null;
+        }
+
+        const preferActions = new Set(['NEW', 'CON', 'EXT', 'EXA', 'EXB', 'UPG', 'COR']);
+        const preferred = vtecList.find((vtec) => preferActions.has(vtec.actionCode));
+
+        return preferred || vtecList[0];
     }
 
     getProperty(propertyName) {
