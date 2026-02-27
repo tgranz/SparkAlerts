@@ -14,7 +14,6 @@ import WMOParser from './parsers/wmo_parser.js';
 
 // Import database worker
 import { addNewAlert, deleteAlert, updateAlert, cancelAlert } from './database.js';
-import { act } from 'react';
 
 // Function to check if message is a CAP message based on TTAII code
 function isCapMessage(ttaaii) {
