@@ -11,8 +11,8 @@ const productMessageRegex = /\d{1,2}:\d{2} [AP]M [A-Z]{3,4} .+? \d{4}\s+(?:[\s\S
 const vtecRegex = /(\/[^/]+?\.\d+\.\d{6}T\d{4}Z-\d{6}T\d{4}Z\/)/g;
 
 // Storm tracking parameters
-const latLonRegex = /LAT\.{3}LON((?:\s+\d{4})+)/;
-const timeMotLocRegex = /TIME\.{3}MOT\.{3}LOC\s+(\d{4}Z)\s+(\d+)DEG\s+(\d+)KT\s+(\d{4})\s+(\d{4})/;
+const latLonRegex = /LAT\.{3}LON((?:\s+\d{4,5})+)/;
+const timeMotLocRegex = /TIME\.{3}MOT\.{3}LOC\s+(\d{4}Z)\s+(\d+)DEG\s+(\d+)KT\s+(\d{4})\s+(\d{5})/;
 const maxHailRegex = /MAX HAIL SIZE\.{3}([\d.]+)\s*IN/;
 const maxWindRegex = /MAX WIND GUST\.{3}(<?.\d+)\s*MPH/;
 const tornadoRegex = /TORNADO\.{3}(.*)/ ;
