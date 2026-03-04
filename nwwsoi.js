@@ -137,6 +137,12 @@ export default class NWWSOI {
                 if (vtec) {
                     // If no VETC we will default to "NEW"
                     const action = vtec.actionCode || 'NEW';
+                    const alertIdentity = {
+                        officeId: vtec.officeId,
+                        phenomena: vtec.phenomena,
+                        significance: vtec.significance,
+                        eventTrackingNumber: vtec.eventTrackingNumber
+                    };
 
                     // NEW = New event
                     // CON = Continuation (same event, updated information)
@@ -150,9 +156,9 @@ export default class NWWSOI {
                     // ROU = Routine message (uncommon)
 
                     if (action === 'EXP') {
-                        // Expiration - remove this alert from the database with the same event tracking number
+                        // Expiration - remove this alert from the database with matching VTEC identity
                         try {
-                            deleteAlert(parser.getProperty('vtec')?.eventTrackingNumber || null);
+                            deleteAlert(alertIdentity);
                             callbacks.onUpdate();
                         } catch (err) {
                             if (err.message.includes('Alert not found')) {
@@ -167,7 +173,7 @@ export default class NWWSOI {
                         const eventTrackingNumber = parser.getProperty('vtec')?.eventTrackingNumber;
                         console.log(`Attempting to cancel alert with eventTrackingNumber: ${eventTrackingNumber}`);
                         try {
-                            cancelAlert(eventTrackingNumber, alertData);
+                            cancelAlert(alertIdentity, alertData);
                             callbacks.onUpdate();
                             return;
                         } catch (err) {
@@ -181,7 +187,7 @@ export default class NWWSOI {
                         const eventTrackingNumber = parser.getProperty('vtec')?.eventTrackingNumber;
                         console.log(`Attempting to ${action} alert with eventTrackingNumber: ${eventTrackingNumber}`);
                         try {
-                            updateAlert(eventTrackingNumber, alertData);
+                            updateAlert(alertIdentity, alertData);
                             callbacks.onUpdate();
                             return;
                         } catch (err) {

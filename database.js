@@ -1,5 +1,44 @@
 import fs from 'fs';
 
+function _formatAlertIdentity(identity) {
+    if (!identity) {
+        return 'null';
+    }
+
+    if (typeof identity === 'string') {
+        return identity;
+    }
+
+    const officeId = identity.officeId || '?';
+    const phenomena = identity.phenomena || '?';
+    const significance = identity.significance || '?';
+    const eventTrackingNumber = identity.eventTrackingNumber || '?';
+
+    return `${officeId}.${phenomena}.${significance}.${eventTrackingNumber}`;
+}
+
+function _isMatchingAlert(alert, identity) {
+    if (!identity) {
+        return false;
+    }
+
+    const alertVtec = alert?.vtec;
+    if (!alertVtec) {
+        return false;
+    }
+
+    if (typeof identity === 'string') {
+        return alertVtec.eventTrackingNumber === identity;
+    }
+
+    return (
+        alertVtec.eventTrackingNumber === identity.eventTrackingNumber &&
+        alertVtec.officeId === identity.officeId &&
+        alertVtec.phenomena === identity.phenomena &&
+        alertVtec.significance === identity.significance
+    );
+}
+
 // Function to read the alert database
 function readAlertDatabase() {
     try {
@@ -48,17 +87,17 @@ function checkAndRemoveExpiredAlerts() {
     }
 }
 
-function deleteAlert(eventTrackingNumber) {
+function deleteAlert(alertIdentity) {
     try {
-        if (!eventTrackingNumber) {
-            throw new Error('Cannot delete alert: eventTrackingNumber is required');
+        if (!alertIdentity) {
+            throw new Error('Cannot delete alert: alert identity is required');
         }
 
         const alerts = readAlertDatabase();
-        const updatedAlerts = alerts.filter(alert => alert.vtec?.eventTrackingNumber !== eventTrackingNumber);
+        const updatedAlerts = alerts.filter(alert => !_isMatchingAlert(alert, alertIdentity));
 
         if (updatedAlerts.length === alerts.length) {
-            throw new Error(`Alert not found with eventTrackingNumber ${eventTrackingNumber}`);
+            throw new Error(`Alert not found with identity ${_formatAlertIdentity(alertIdentity)}`);
         }
 
         fs.writeFileSync('alerts.json', JSON.stringify(updatedAlerts), 'utf8');
@@ -67,20 +106,20 @@ function deleteAlert(eventTrackingNumber) {
     }
 }
 
-function updateAlert(eventTrackingNumber, updatedData) {
-    // Always use ETC to identify alert
+function updateAlert(alertIdentity, updatedData) {
+    // Use VTEC identity to identify alert
     try {
-        if (!eventTrackingNumber) {
-            throw new Error('Cannot update alert: eventTrackingNumber is required');
+        if (!alertIdentity) {
+            throw new Error('Cannot update alert: alert identity is required');
         }
 
         const alerts = readAlertDatabase();
         let alertFound = false;
 
         const updatedAlerts = alerts.map(alert => {
-            if (alert.vtec?.eventTrackingNumber === eventTrackingNumber) {
+            if (_isMatchingAlert(alert, alertIdentity)) {
                 alertFound = true;
-                console.log(`Updating alert with eventTrackingNumber ${eventTrackingNumber}`);
+                console.log(`Updating alert with identity ${_formatAlertIdentity(alertIdentity)}`);
                 return { 
                     id: alert.id,
                     productCode: alert.productCode,
@@ -102,7 +141,7 @@ function updateAlert(eventTrackingNumber, updatedData) {
         });
 
         if (!alertFound) {
-            throw new Error(`Alert not found with eventTrackingNumber ${eventTrackingNumber}`);
+            throw new Error(`Alert not found with identity ${_formatAlertIdentity(alertIdentity)}`);
         }
 
         fs.writeFileSync('alerts.json', JSON.stringify(updatedAlerts), 'utf8');
@@ -111,20 +150,20 @@ function updateAlert(eventTrackingNumber, updatedData) {
     }
 }
 
-function cancelAlert(eventTrackingNumber, updatedData) {
-    // Find alert by ETC
+function cancelAlert(alertIdentity, updatedData) {
+    // Find alert by VTEC identity
     try {
-        if (!eventTrackingNumber) {
-            throw new Error('Cannot cancel alert: eventTrackingNumber is required');
+        if (!alertIdentity) {
+            throw new Error('Cannot cancel alert: alert identity is required');
         }
 
         const alerts = readAlertDatabase();
         let alertFound = false;
 
         const updatedAlerts = alerts.map(alert => {
-            if (alert.vtec?.eventTrackingNumber === eventTrackingNumber) {
+            if (_isMatchingAlert(alert, alertIdentity)) {
                 alertFound = true;
-                console.log(`Cancelling alert with eventTrackingNumber ${eventTrackingNumber}`);
+                console.log(`Cancelling alert with identity ${_formatAlertIdentity(alertIdentity)}`);
                 return { 
                     id: alert.id,
                     productCode: alert.productCode,
@@ -146,7 +185,7 @@ function cancelAlert(eventTrackingNumber, updatedData) {
         });
 
         if (!alertFound) {
-            throw new Error(`Alert not found with eventTrackingNumber ${eventTrackingNumber}`);
+            throw new Error(`Alert not found with identity ${_formatAlertIdentity(alertIdentity)}`);
         }
 
         fs.writeFileSync('alerts.json', JSON.stringify(updatedAlerts), 'utf8');
