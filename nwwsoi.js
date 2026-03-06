@@ -155,8 +155,8 @@ export default class NWWSOI {
                     // COR = Correction
                     // ROU = Routine message (uncommon)
 
-                    if (action === 'EXP') {
-                        // Expiration - remove this alert from the database with matching VTEC identity
+                    if (action === 'EXP' || action === "CAN") {
+                        // Expiration/cancellation - remove this alert from the database with matching VTEC identity
                         try {
                             deleteAlert(alertIdentity);
                             callbacks.onUpdate();
@@ -168,18 +168,6 @@ export default class NWWSOI {
                             }
                         }
                         return;
-                    } else if (action === 'CAN') {
-                        // Cancellation - Append cancellation message, update geometry, but keep everything else
-                        const eventTrackingNumber = parser.getProperty('vtec')?.eventTrackingNumber;
-                        console.log(`Attempting to cancel alert with eventTrackingNumber: ${eventTrackingNumber}`);
-                        try {
-                            cancelAlert(alertIdentity, alertData);
-                            callbacks.onUpdate();
-                            return;
-                        } catch (err) {
-                            console.warn('Failed to cancel alert:', err.message, '- Adding as new alert instead');
-                            // Fall through to add as new alert
-                        }
                     } else if (action === 'ROU') {
                         return; // Ignore routine messages as they are not actual alerts
                     } else if (action !== 'NEW') {
