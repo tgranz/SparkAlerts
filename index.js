@@ -13,7 +13,10 @@ catch (err) { console.error('Error loading config.json:', err.message); process.
 const apiServer = new API(config?.api?.port || 3000);
 
 // Start the NWWSOI client listener
-const nwwsoiClient = new NWWSOI(config?.products || {}, { onNew: () => apiServer.triggerNewAlertEvent(), onUpdate: () => apiServer.triggerUpdateAlertEvent() });
+const nwwsoiClient = new NWWSOI(config?.products || {}, {
+    onNew: (alert) => apiServer.triggerNewAlertEvent(alert),
+    onUpdate: (alert) => apiServer.triggerUpdateAlertEvent(alert)
+});
 
 // Check for expired alerts every 30 seconds
 setInterval(() => {

@@ -60,26 +60,53 @@ export default class API {
     // Function that triggers a SSE:NEW event
     // Indicates a new alert has been added to the database
     triggerNewAlertEvent(alert) {
+        if (!alert) {
+            console.warn('API: triggerNewAlertEvent called with no alert data');
+            return;
+        }
         this._broadcastEvent('NEW', alert);
     }
 
     // Function that triggers a SSE:UPDATE event
     // Indicates the database has changed but no new alert has been added
     triggerUpdateAlertEvent(alert) {
+        if (!alert) {
+            console.warn('API: triggerUpdateAlertEvent called with no alert data');
+            return;
+        }
         this._broadcastEvent('UPDATE', alert);
     }
 
     _broadcastEvent(eventType, data) {
-        const message = `event: ${eventType}\ndata: ${JSON.stringify(data)}\n\n`;
+        if (!data) {
+            console.error(`API: Cannot broadcast ${eventType} event with null/undefined data`);
+            return;
+        }
+
+        let jsonData;
+        try {
+            jsonData = JSON.stringify(data);
+        } catch (err) {
+            console.error(`API: Failed to stringify ${eventType} event data:`, err.message);
+            return;
+        }
+
+        const message = `event: ${eventType}\ndata: ${jsonData}\n\n`;
         
         // Send to all connected SSE clients
+        let successCount = 0;
         this.sseClients.forEach(client => {
             try {
                 client.write(message);
+                successCount++;
             } catch (err) {
                 // Client disconnected, remove it
                 this.sseClients.delete(client);
             }
         });
+
+        if (successCount > 0) {
+            console.log(`API: Broadcasted ${eventType} event to ${successCount} client(s)`);
+        }
     }
 }

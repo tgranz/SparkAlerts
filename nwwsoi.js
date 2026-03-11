@@ -155,8 +155,8 @@ export default class NWWSOI {
                     // COR = Correction
                     // ROU = Routine message (uncommon)
 
-                    if (action === 'EXP') {
-                        // Expiration - remove this alert from the database with matching VTEC identity
+                    if (action === 'EXP' || action === "CAN") {
+                        // Expiration/cancellation - remove this alert from the database with matching VTEC identity
                         try {
                             deleteAlert(alertIdentity);
                             callbacks.onUpdate();
@@ -176,7 +176,7 @@ export default class NWWSOI {
                         console.log(`Attempting to ${action} alert with eventTrackingNumber: ${eventTrackingNumber}`);
                         try {
                             updateAlert(alertIdentity, alertData);
-                            callbacks.onUpdate();
+                            callbacks.onUpdate(alertData);
                             return;
                         } catch (err) {
                             console.warn('Failed to update alert:', err.message, '- Adding as new alert instead');
@@ -188,7 +188,7 @@ export default class NWWSOI {
                 // Push this alert to the database
                 try {
                     addNewAlert(alertData);
-                    callbacks.onNew();
+                    callbacks.onNew(alertData);
                     console.log('Successfully stored alert in database\n');
                 } catch (err) {
                     console.error('Error saving alert to database:', err.message);
