@@ -150,7 +150,7 @@ export default class NWWSOI {
                     // EXA = Extension (extended area)
                     // EXB = Extension (extended time and area)
                     // UPG = Upgrade (uncommon)
-                    // CAN = Cancellation
+                    // CAN = Cancellation (partial, uses update)
                     // EXP = Expiration
                     // COR = Correction
                     // ROU = Routine message (uncommon)
@@ -168,18 +168,6 @@ export default class NWWSOI {
                             }
                         }
                         return;
-                    } else if (action === 'CAN') {
-                        // Cancellation - Append cancellation message, update geometry, but keep everything else
-                        const eventTrackingNumber = parser.getProperty('vtec')?.eventTrackingNumber;
-                        console.log(`Attempting to cancel alert with eventTrackingNumber: ${eventTrackingNumber}`);
-                        try {
-                            cancelAlert(alertIdentity, alertData);
-                            callbacks.onUpdate();
-                            return;
-                        } catch (err) {
-                            console.warn('Failed to cancel alert:', err.message, '- Adding as new alert instead');
-                            // Fall through to add as new alert
-                        }
                     } else if (action === 'ROU') {
                         return; // Ignore routine messages as they are not actual alerts
                     } else if (action !== 'NEW') {

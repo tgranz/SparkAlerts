@@ -128,7 +128,7 @@ function updateAlert(alertIdentity, updatedData) {
                     expiresAt: updatedData.expiresAt || new Date(Date.now() + 3600000).toISOString(), // Default to 1 hour if no expiration provided
                     nwsOffice: updatedData.nwsOffice,
                     vtec: updatedData.vtec,
-                    message: updatedData.message,
+                    message: updatedData.message + "\n\n" + (alert.message || ''), // Prepend update message to original message
                     geometry: updatedData.geometry,
                     properties: {
                         isPds: updatedData.properties?.isPds || false,
