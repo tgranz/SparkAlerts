@@ -52,6 +52,11 @@ export default class API {
             });
         });
 
+        // Endpoint to get the number of active SSE clients
+        this.app.get('/connections', (req, res) => {
+            res.json({ count: this.sseClients.size });
+        });
+
         this.app.listen(this.port, () => {
             console.log(`API server running on http://localhost:${this.port}`);
         });
