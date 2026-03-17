@@ -1,7 +1,7 @@
 import express from 'express';
 import path from 'path';
 import { fileURLToPath } from 'url';
-import { readAlertDatabase } from './database.js';
+import { readAlertDatabase, getProduct } from './database.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
@@ -51,6 +51,23 @@ export default class API {
                 this.sseClients.delete(res);
             });
         });
+
+        this.app.get('/product/:code', (req, res) => {
+            const code = req.params.code;
+            switch (code) {
+                case 'COD':
+                    try {
+                        const productData = getProduct(code.toLowerCase());
+                        res.json(productData);
+                    } catch (err) {
+                        res.status(404).json({ error: err.message });
+                    }
+                    break;
+                default:
+                    res.status(404).json({ error: 'Product not supported or unavailable.' });
+            }
+        });
+        
 
         // Endpoint to get the number of active SSE clients
         this.app.get('/connections', (req, res) => {

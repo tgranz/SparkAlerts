@@ -194,6 +194,28 @@ function cancelAlert(alertIdentity, updatedData) {
     }
 }
 
+function storeProduct(code, productData) {
+    try {
+        const filePath = `products/${code.toLowerCase()}.json`;
+        fs.writeFileSync(filePath, JSON.stringify(productData), 'utf8');
+    } catch (err) {
+        throw new Error('Error storing product data: ' + err.message);
+    }
+}
+
+function getProduct(code) {
+    try {
+        const filePath = `products/${code.toLowerCase()}.json`;
+        if (!fs.existsSync(filePath)) {
+            throw new Error(`Product with code ${code} not found`);
+        }
+        const data = fs.readFileSync(filePath, 'utf8');
+        return JSON.parse(data);
+    } catch (err) {
+        throw new Error('Error retrieving product data: ' + err.message);
+    }
+}
+
 // Export the database functions
 export {
     readAlertDatabase,
@@ -201,5 +223,7 @@ export {
     checkAndRemoveExpiredAlerts,
     deleteAlert,
     updateAlert,
-    cancelAlert
+    cancelAlert,
+    storeProduct,
+    getProduct
 };

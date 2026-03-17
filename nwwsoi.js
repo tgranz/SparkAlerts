@@ -11,9 +11,10 @@ import fs from 'fs';
 // Import parsers
 import CAPParser from './parsers/cap_parser.js';
 import WMOParser from './parsers/wmo_parser.js';
+import parseCOD from './parsers/special/cod.js';
 
 // Import database worker
-import { addNewAlert, deleteAlert, updateAlert, cancelAlert } from './database.js';
+import { addNewAlert, deleteAlert, updateAlert, cancelAlert, storeProduct } from './database.js';
 
 // Function to check if message is a CAP message based on TTAII code
 function isCapMessage(ttaaii) {
@@ -92,6 +93,20 @@ export default class NWWSOI {
                     fs.writeFileSync(demoPath, stanza.toString(), 'utf8');
 
                     console.warn("CAP messages not yet supported. Saved message to", demoPath);
+                    return;
+                }
+
+                // Check if this is a special product
+                if (productInfo.productCode === 'COD') {
+                    const parsed = parseCOD(messageText.split('\n'));
+
+                    // Store the product
+                    try {
+                        storeProduct('cod', parsed);
+                    } catch (err) {
+                        console.error('Error storing COD product:', err.message);
+                    }
+                    
                     return;
                 }
 
