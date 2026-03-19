@@ -28,6 +28,11 @@ export default class WMOParser {
         this.issuedAt = fullMessage.getChild('x', 'nwws-oi')?.attrs?.issue || null;
         this.officeCode = fullMessage.getChild('x', 'nwws-oi')?.attrs?.cccc || null;
 
+        // Strip HTML from message (no idea why they sometimes appear)
+        if (this.productMessage) {
+            this.productMessage = this.productMessage.replace(/<[^>]+>/g, '');
+        }
+
         // Run processing
         this._process();
     }
