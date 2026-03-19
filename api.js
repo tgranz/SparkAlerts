@@ -13,6 +13,17 @@ export default class API {
         this.app = express();
         this.app.use(express.json());
         this.app.use(express.static(path.join(__dirname, 'public'))); // Serve static files
+        this.app.use((req, res, next) => {
+            res.setHeader('Access-Control-Allow-Origin', '*');
+            res.setHeader('Access-Control-Allow-Methods', 'GET,POST,PUT,PATCH,DELETE,OPTIONS');
+            res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization');
+
+            if (req.method === 'OPTIONS') {
+                return res.sendStatus(204);
+            }
+
+            next();
+        });
 
         // Status endpoint
         this.app.get('/', (req, res) => {
@@ -26,8 +37,6 @@ export default class API {
 
         // Endpoint to get all active alerts
         this.app.get('/alerts', (req, res) => {
-            // Set CORS header to allow cross-origin requests
-            res.setHeader('Access-Control-Allow-Origin', '*');
             // Return all alerts from the database
             res.json({ alerts: readAlertDatabase() });
         });
@@ -38,7 +47,6 @@ export default class API {
             res.setHeader('Content-Type', 'text/event-stream');
             res.setHeader('Cache-Control', 'no-cache');
             res.setHeader('Connection', 'keep-alive');
-            res.setHeader('Access-Control-Allow-Origin', '*');
 
             // Add this client to the set
             this.sseClients.add(res);
