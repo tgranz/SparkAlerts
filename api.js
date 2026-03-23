@@ -2,6 +2,7 @@ import express from 'express';
 import path from 'path';
 import { fileURLToPath } from 'url';
 import { readAlertDatabase, getProduct } from './database.js';
+import { recordSubscribe, getAnalytics } from './utils/analytics.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
@@ -54,6 +55,9 @@ export default class API {
             // Keep the connection alive with a comment
             res.write(':connected\n\n');
 
+            // Record successful subscribe event
+            recordSubscribe();
+
             // Remove client on disconnect
             req.on('close', () => {
                 this.sseClients.delete(res);
@@ -77,9 +81,14 @@ export default class API {
         });
         
 
-        // Endpoint to get the number of active SSE clients
+        // Endpoint to get analytics data (subscribe events by day for last 30 days)
+        this.app.get('/analytics', (req, res) => {
+            res.json(getAnalytics());
+        });
+
+        // Endpoint to get current connections
         this.app.get('/connections', (req, res) => {
-            res.json({ count: this.sseClients.size });
+            res.json({ connections: this.sseClients.size });
         });
 
         this.app.listen(this.port, () => {
