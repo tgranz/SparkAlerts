@@ -44,6 +44,8 @@ export default class API {
 
         // Endpoint to subscribe to SSE stream
         this.app.get('/subscribe', (req, res) => {
+            const toLog = req.query.log === 'true' ? true : false; // Default to false if not specified
+
             // Set up SSE headers
             res.setHeader('Content-Type', 'text/event-stream');
             res.setHeader('Cache-Control', 'no-cache');
@@ -56,7 +58,7 @@ export default class API {
             res.write(':connected\n\n');
 
             // Record successful subscribe event
-            recordSubscribe();
+            if (toLog) recordSubscribe();
 
             // Remove client on disconnect
             req.on('close', () => {
