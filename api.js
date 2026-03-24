@@ -45,6 +45,7 @@ export default class API {
         // Endpoint to subscribe to SSE stream
         this.app.get('/subscribe', (req, res) => {
             const toLog = req.query.log === 'true' ? true : false; // Default to false if not specified
+            console.log('Subscribe hit; log subscribe event:', toLog);
 
             // Set up SSE headers
             res.setHeader('Content-Type', 'text/event-stream');
