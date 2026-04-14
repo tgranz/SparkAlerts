@@ -6,16 +6,43 @@ import { recordSubscribe, getAnalytics } from './utils/analytics.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
+function normalizeOrigin(origin) {
+    if (!origin || typeof origin !== 'string') return null;
+
+    try {
+        return new URL(origin).origin.toLowerCase();
+    } catch {
+        return origin.trim().toLowerCase().replace(/\/+$/, '');
+    }
+}
+
 export default class API {
-    constructor(port) {
+    constructor(port, options = {}) {
         this.port = port;
         this.sseClients = new Set(); // Track all SSE connections
+        this.allowNoOrigin = options.allowNoOrigin ?? false;
+        this.domainWhitelist = new Set((options.domainWhitelist || [])
+            .map(normalizeOrigin)
+            .filter(Boolean));
 
         this.app = express();
         this.app.use(express.json());
         this.app.use(express.static(path.join(__dirname, 'public'))); // Serve static files
         this.app.use((req, res, next) => {
-            res.setHeader('Access-Control-Allow-Origin', '*');
+            const requestOrigin = normalizeOrigin(req.headers.origin);
+            const hasWhitelist = this.domainWhitelist.size > 0;
+            const originAllowed = requestOrigin && this.domainWhitelist.has(requestOrigin);
+            const noOriginAllowed = !requestOrigin && this.allowNoOrigin;
+
+            if (hasWhitelist && !originAllowed && !noOriginAllowed) {
+                return res.status(403).json({ error: 'Origin not allowed.' });
+            }
+
+            if (requestOrigin && (!hasWhitelist || originAllowed)) {
+                res.setHeader('Access-Control-Allow-Origin', req.headers.origin);
+                res.setHeader('Vary', 'Origin');
+            }
+
             res.setHeader('Access-Control-Allow-Methods', 'GET,POST,PUT,PATCH,DELETE,OPTIONS');
             res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization');
 

@@ -16,6 +16,7 @@ const timeMotLocRegex = /TIME\.{3}MOT\.{3}LOC\s+(\d{4}Z)\s+(\d+)DEG\s+(\d+)KT\s+
 const maxHailRegex = /MAX HAIL SIZE\.{3}([\d.]+)\s*IN/;
 const maxWindRegex = /MAX WIND GUST\.{3}(<?.\d+)\s*MPH/;
 const tornadoRegex = /TORNADO\.{3}(.*)/ ;
+const eastHemisphereOffices = new Set(['PGUM']);
 
 
 export default class WMOParser {
@@ -116,12 +117,14 @@ export default class WMOParser {
         const latLonMatch = rawMessage.match(latLonRegex);
         if (latLonMatch) {
             const coords = latLonMatch[1].trim().split(/\s+/).map(n => parseInt(n));
+            const useEastHemisphereLon = eastHemisphereOffices.has(this.officeCode);
             
             // Coords are pairs: lat, lon, lat, lon
             const coordinates = [];
             for (let i = 0; i < coords.length; i += 2) {
                 const lat = coords[i] / 100;
-                const lon = -(coords[i + 1] / 100); // Negative for western hemisphere
+                const lonValue = coords[i + 1] / 100;
+                const lon = useEastHemisphereLon ? lonValue : -lonValue;
                 coordinates.push([lon, lat]);
             }
 
@@ -142,13 +145,15 @@ export default class WMOParser {
         const timeMotLocMatch = rawMessage.match(timeMotLocRegex);
         if (timeMotLocMatch) {
             const [, time, direction, speed, lat, lon] = timeMotLocMatch;
+            const useEastHemisphereLon = eastHemisphereOffices.has(this.officeCode);
+            const lonValue = parseInt(lon) / 100;
             this.timeMotLoc = {
                 time: time,
                 direction: parseInt(direction),
                 speed: parseInt(speed),
                 location: {
                     lat: parseInt(lat) / 100,
-                    lon: -(parseInt(lon) / 100)
+                    lon: useEastHemisphereLon ? lonValue : -lonValue
                 }
             };
         } else {

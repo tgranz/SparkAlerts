@@ -98,6 +98,7 @@ export default class NWWSOI {
 
                 // Check if this is a special product
                 if (productInfo.productCode === 'COD') {
+                    // Coded surface analysis: fronts, pressure centers, and troughs
                     const parsed = parseCOD(messageText.split('\n'));
 
                     // Store the product
@@ -107,6 +108,18 @@ export default class NWWSOI {
                         console.error('Error storing COD product:', err.message);
                     }
                     
+                    return;
+                } else if (productInfo.productCode === 'SWO') {
+                    // Severe weather outlook narrative + mesoscale discussions (testing)
+                    const parsed = String(messageText)
+
+                    // Store the product
+                    try {
+                        storeProduct('swo', parsed);
+                    } catch (err) {
+                        console.error('Error storing SWO product:', err.message);
+                    }
+
                     return;
                 }
 

@@ -196,8 +196,15 @@ function cancelAlert(alertIdentity, updatedData) {
 
 function storeProduct(code, productData) {
     try {
-        const filePath = `products/${code.toLowerCase()}.json`;
-        fs.writeFileSync(filePath, JSON.stringify(productData), 'utf8');
+        let json, filePath;
+        try {
+            json = JSON.stringify(productData);
+            filePath = `products/${code.toLowerCase()}.json`;
+        } catch (err) {
+            json = String(productData);
+            filePath = `products/${code.toLowerCase()}.txt`;
+        }
+        fs.writeFileSync(filePath, json, 'utf8');
     } catch (err) {
         throw new Error('Error storing product data: ' + err.message);
     }
