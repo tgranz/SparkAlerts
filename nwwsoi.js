@@ -16,6 +16,7 @@ import parseCOD from './parsers/special/cod.js';
 // Import database worker
 import { addNewAlert, deleteAlert, updateAlert, cancelAlert, storeProduct } from './database.js';
 
+
 // Function to check if message is a CAP message based on TTAII code
 function isCapMessage(ttaaii) {
     // TTAII of a SPS looks like: WWUS81
@@ -57,7 +58,6 @@ export default class NWWSOI {
             console.log('Connected as', address.toString(), '\n');
 
             // Join chatroom
-            const roomJid = 'room@conference.example.com';
             const presence = xml( 'presence', { to: 'nwws@conference.nwws-oi.weather.gov/SparkRadar' });
             await this.xmpp.send(presence);
         });
@@ -71,7 +71,7 @@ export default class NWWSOI {
                 const ttaaii = stanza.getChild('x', 'nwws-oi')?.attrs?.ttaaii || null;
                 const isCap = isCapMessage(ttaaii || '');
 
-                if (!productInfo.productName) {
+                if (!productInfo || !productInfo.productName) {
                     // productName will be null if product code is not found in lookups
                     return;
                 } else if (this.productFilter.length > 0 && !this.productFilter.includes(productInfo.productCode)) {
@@ -158,6 +158,9 @@ export default class NWWSOI {
                         isPds: parser.getProperty('isPds') || false,
                         isConsiderable: parser.getProperty('isConsiderable') || false,
                         isDestructive: parser.getProperty('isDestructive') || false,
+                        isEmergency: parser.getProperty('isEmergency') || false,
+                        isTorPossible: parser.getProperty('isTorPossible') || false,
+                        isWaterspoutPossible: parser.getProperty('isWaterspoutPossible') || false,
                     }
                 };
 
@@ -183,8 +186,8 @@ export default class NWWSOI {
                     // COR = Correction
                     // ROU = Routine message (uncommon)
 
-                    if (action === 'EXP' || action === "CAN") {
-                        // Expiration/cancellation - remove this alert from the database with matching VTEC identity
+                    if (action === 'EXP') {
+                        // Full expiration - remove alert from database
                         try {
                             deleteAlert(alertIdentity);
                             callbacks.onUpdate();
@@ -193,6 +196,19 @@ export default class NWWSOI {
                                 console.warn('Attempted to delete alert that does not exist in database:', err.message);
                             } else {
                                 console.error('Error deleting alert from database:', err.message);
+                            }
+                        }
+                        return;
+                    } else if (action === 'CAN') {
+                        // Partial cancellation - update alert with cancellation message
+                        try {
+                            cancelAlert(alertIdentity, alertData);
+                            callbacks.onUpdate(alertData);
+                        } catch (err) {
+                            if (err.message.includes('Alert not found')) {
+                                console.warn('Attempted to cancel alert that does not exist in database:', err.message);
+                            } else {
+                                console.error('Error cancelling alert in database:', err.message);
                             }
                         }
                         return;

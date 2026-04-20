@@ -17,6 +17,36 @@ function _formatAlertIdentity(identity) {
     return `${officeId}.${phenomena}.${significance}.${eventTrackingNumber}`;
 }
 
+function _getUpdatedProps(updatedMessage) {
+    // Cancellation mesesages have no props
+    // Thus, a PDS tornado warning for example may appear downgraded
+    // We need to ignore cancellation messages for props
+    const messages = updatedMessage.split('#####');
+    // Loop until latest non-cancellation message
+    let latestMessageForProps = '';
+    for (let i = messages.length - 1; i >= 0; i--) {
+        const thisMessage = messages[i].trim();
+        if (thisMessage) {
+            if (thisMessage.toLowerCase().includes('has been cancelled')){
+                continue; // Skip cancellation messages
+            } else {
+                // This is the latest non-cancellation message, use it for properties
+                latestMessageForProps = thisMessage;
+                break;
+            }
+        }
+    }
+
+    return {
+        isPds: latestMessageForProps.toLowerCase().includes('particularly dangerous situation') || false,
+        isConsiderable: latestMessageForProps.toLowerCase().includes('thunderstorm damage threat...considerable') || false,
+        isDestructive: latestMessageForProps.toLowerCase().includes('thunderstorm damage threat...destructive') || false,
+        isEmergency: latestMessageForProps.toLowerCase().includes('tornado emergency') || latestMessageForProps.toLowerCase().includes('flash flood emergency') || false,
+        isTorPossible: latestMessageForProps.toLowerCase().includes('tornado...possible') || false,
+        isWaterspoutPossible: latestMessageForProps.toLowerCase().includes('waterspout...possible') || false,
+    };
+}
+
 function _isMatchingAlert(alert, identity) {
     if (!identity) {
         return false;
@@ -120,6 +150,11 @@ function updateAlert(alertIdentity, updatedData) {
             if (_isMatchingAlert(alert, alertIdentity)) {
                 alertFound = true;
                 console.log(`Updating alert with identity ${_formatAlertIdentity(alertIdentity)}`);
+
+                const updatedMessage = updatedData.message + "\n\n#####\n\n" + (alert.message || ''); // Prepend update message to original message
+
+                const updatedProps = _getUpdatedProps(updatedMessage);
+
                 return { 
                     id: alert.id,
                     productCode: alert.productCode,
@@ -128,13 +163,9 @@ function updateAlert(alertIdentity, updatedData) {
                     expiresAt: updatedData.expiresAt || new Date(Date.now() + 3600000).toISOString(), // Default to 1 hour if no expiration provided
                     nwsOffice: updatedData.nwsOffice,
                     vtec: updatedData.vtec,
-                    message: updatedData.message + "\n\n#####\n\n" + (alert.message || ''), // Prepend update message to original message
+                    message: updatedMessage,
                     geometry: updatedData.geometry,
-                    properties: {
-                        isPds: updatedData.properties?.isPds || false,
-                        isConsiderable: updatedData.properties?.isConsiderable || false,
-                        isDestructive: updatedData.properties?.isDestructive || false,
-                    }
+                    properties: updatedProps
                  };
             }
             return alert;
@@ -164,21 +195,22 @@ function cancelAlert(alertIdentity, updatedData) {
             if (_isMatchingAlert(alert, alertIdentity)) {
                 alertFound = true;
                 console.log(`Cancelling alert with identity ${_formatAlertIdentity(alertIdentity)}`);
+
+                const updatedMessage = updatedData.message + "\n\n#####\n\n" + (alert.message || ''); // Prepend update message to original message
+
+                const updatedProps = _getUpdatedProps(updatedMessage);
+
                 return { 
                     id: alert.id,
                     productCode: alert.productCode,
                     productName: alert.productName,
-                    receivedAt: alert.receivedAt,
+                    receivedAt: new Date().toISOString(),
                     expiresAt: alert.expiresAt,
                     nwsOffice: alert.nwsOffice,
                     vtec: updatedData.vtec,
-                    message: updatedData.message + "\n\n" + alert.message, // Prepend cancellation message to original message
+                    message: updatedMessage,
                     geometry: updatedData.geometry, // Use updated geometry
-                    properties: {
-                        isPds: updatedData.properties?.isPds || false,
-                        isConsiderable: updatedData.properties?.isConsiderable || false,
-                        isDestructive: updatedData.properties?.isDestructive || false,
-                    }
+                    properties: updatedProps
                  };
             }
             return alert;
@@ -204,6 +236,7 @@ function storeProduct(code, productData) {
             json = String(productData);
             filePath = `products/${code.toLowerCase()}.txt`;
         }
+        fs.mkdirSync('products', { recursive: true });
         fs.writeFileSync(filePath, json, 'utf8');
     } catch (err) {
         throw new Error('Error storing product data: ' + err.message);

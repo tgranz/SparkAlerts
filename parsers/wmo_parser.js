@@ -221,13 +221,32 @@ export default class WMOParser {
                 }
             case 'isConsiderable':
                 try {
-                    return this.productMessage?.toLowerCase().includes('considerable') || false;
+                    return this.productMessage?.toLowerCase().includes('thunderstorm damage threat...considerable') || false;
                 } catch {
                     return false;
                 }
             case 'isDestructive':
                 try {
-                    return this.productMessage?.toLowerCase().includes('destructive') || false;
+                    return this.productMessage?.toLowerCase().includes('thunderstorm damage threat...destructive') || false;
+                } catch {
+                    return false;
+                }
+            case 'isEmergency':
+                try {
+                    return this.productMessage?.toLowerCase().includes('tornado emergency') ||
+                    this.productMessage?.toLowerCase().includes('flash flood emergency') || false;
+                } catch {
+                    return false;
+                }
+            case 'isTorPossible':
+                try {
+                    return this.productMessage?.toLowerCase().includes('tornado...possible') || false;
+                } catch {
+                    return false;
+                }
+            case 'isWaterspoutPossible':
+                try {
+                    return this.productMessage?.toLowerCase().includes('waterspout...possible') || false;
                 } catch {
                     return false;
                 }

@@ -1,6 +1,6 @@
 {
   "ABV": "Rawinsonde Data Above 100 Millibars",
-  "ADA": "Alarm/Alert Administrative Msg",
+  "ADA": "Alarm/Alert Administrative Message",
   "ADM": "Alert Administrative Message",
   "ADR": "NWS Administrative Message",
   "ADV": "Generic Space Environment Advisory",
@@ -239,7 +239,7 @@
   "SAF": "Speci Agri Wx Fcst / Advisory / Flying Farmer Fcst Outlook",
   "SAG": "Snow Avalanche Guidance",
   "SAT": "APT Prediction",
-  "SAW": "Prelim Notice of Watch & Cancellation Msg",
+  "SAW": "Prelim Notice of Watch & Cancellation Message",
   "SCC": "Storm Summary",
   "SCD": "Supplementary Climatological Data",
   "SCN": "Soil Climate Analysis Network Data",
@@ -247,7 +247,7 @@
   "SCS": "Selected Cities Summary",
   "SDO": "Supplementary Data Observation",
   "SDS": "Special Dispersion Statement",
-  "SEL": "Severe Local Storm Watch and Watch Cancellation Msg",
+  "SEL": "Severe Local Storm Watch and Watch Cancellation Message",
   "SEV": "SPC Watch Point Information Message",
   "SFP": "State Forecast",
   "SFT": "Tabular State Forecast",
@@ -338,6 +338,6 @@
   "WSV": "Volcanic Activity Sigmet",
   "WSW": "Winter Weather Warnings / Watches / Advisories",
   "WWA": "Watch Status Report",
-  "WWP": "Severe Thunderstorm / Tornado Watch Probabilities",
+  "WWP": "Watch Probabilities",
   "ZFP": "Zone Forecast Product"
 }
