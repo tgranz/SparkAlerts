@@ -43,6 +43,8 @@ function _getUpdatedProps(updatedMessage) {
         isDestructive: latestMessageForProps.toLowerCase().includes('thunderstorm damage threat...destructive') || false,
         isEmergency: latestMessageForProps.toLowerCase().includes('tornado emergency') || latestMessageForProps.toLowerCase().includes('flash flood emergency') || false,
         isTorPossible: latestMessageForProps.toLowerCase().includes('tornado...possible') || false,
+        isTorConfirmed: latestMessageForProps.toLowerCase().includes('tornado...observed') || false,
+        isTorRadarIndicated: latestMessageForProps.toLowerCase().includes('tornado...radar indicated') || false,
         isWaterspoutPossible: latestMessageForProps.toLowerCase().includes('waterspout...possible') || false,
     };
 }

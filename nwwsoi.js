@@ -160,7 +160,8 @@ export default class NWWSOI {
                         isDestructive: parser.getProperty('isDestructive') || false,
                         isEmergency: parser.getProperty('isEmergency') || false,
                         isTorPossible: parser.getProperty('isTorPossible') || false,
-                        isWaterspoutPossible: parser.getProperty('isWaterspoutPossible') || false,
+                        isTorConfirmed: parser.getProperty('isTorConfirmed') || false,
+                        isTorRadarIndicated: parser.getProperty('isTorRadarIndicated') || false,
                     }
                 };
 

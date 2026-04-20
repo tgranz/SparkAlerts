@@ -250,6 +250,18 @@ export default class WMOParser {
                 } catch {
                     return false;
                 }
+            case 'isTorConfirmed':
+                try {
+                    return this.productMessage?.toLowerCase().includes('tornado...observed') || false;
+                } catch {
+                    return false;
+                }
+            case 'isTorRadarIndicated':
+                try {
+                    return this.productMessage?.toLowerCase().includes('tornado...radar indicated') || false;
+                } catch {
+                    return false;
+                }
             case 'vtec':
                 return this.vtec;
             case 'tornado':
