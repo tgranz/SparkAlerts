@@ -19,7 +19,7 @@ function normalizeOrigin(origin) {
 export default class API {
     constructor(port, options = {}) {
         this.port = port;
-        this.sseClients = new Set(); // Track all SSE connections
+        this.sseClients = new Set(); // Track all SSE client state objects
         this.allowNoOrigin = options.allowNoOrigin ?? false;
         this.domainWhitelist = new Set((options.domainWhitelist || [])
             .map(normalizeOrigin)
@@ -75,23 +75,60 @@ export default class API {
             console.log('Subscribe hit; log subscribe event:', toLog);
 
             // Set up SSE headers
-            res.setHeader('Content-Type', 'text/event-stream');
-            res.setHeader('Cache-Control', 'no-cache');
+            res.setHeader('Content-Type', 'text/event-stream; charset=utf-8');
+            res.setHeader('Cache-Control', 'no-cache, no-transform');
             res.setHeader('Connection', 'keep-alive');
+            res.setHeader('X-Accel-Buffering', 'no');
+
+            // Flush headers early so proxies and browsers treat this as a live stream immediately
+            if (typeof res.flushHeaders === 'function') {
+                res.flushHeaders();
+            }
+
+            // Instruct EventSource clients how quickly they should retry after disconnect
+            res.write('retry: 5000\n\n');
+
+            const heartbeatIntervalMs = 25000;
+            const client = {
+                res,
+                heartbeat: null
+            };
+
+            const cleanupClient = () => {
+                if (client.heartbeat) {
+                    clearInterval(client.heartbeat);
+                    client.heartbeat = null;
+                }
+                this.sseClients.delete(client);
+            };
 
             // Add this client to the set
-            this.sseClients.add(res);
+            this.sseClients.add(client);
 
             // Keep the connection alive with a comment
             res.write(':connected\n\n');
+
+            // Keep stream alive through proxies/load balancers that close idle HTTP connections
+            client.heartbeat = setInterval(() => {
+                if (res.writableEnded || res.destroyed) {
+                    cleanupClient();
+                    return;
+                }
+
+                try {
+                    res.write(`:heartbeat ${Date.now()}\n\n`);
+                } catch {
+                    cleanupClient();
+                }
+            }, heartbeatIntervalMs);
 
             // Record successful subscribe event
             if (toLog) recordSubscribe();
 
             // Remove client on disconnect
-            req.on('close', () => {
-                this.sseClients.delete(res);
-            });
+            req.on('close', cleanupClient);
+            res.on('close', cleanupClient);
+            res.on('error', cleanupClient);
         });
 
         this.app.get('/product/:code', (req, res) => {
@@ -165,8 +202,15 @@ export default class API {
         // Send to all connected SSE clients
         let successCount = 0;
         this.sseClients.forEach(client => {
+            const response = client.res;
+
+            if (!response || response.writableEnded || response.destroyed) {
+                this.sseClients.delete(client);
+                return;
+            }
+
             try {
-                client.write(message);
+                response.write(message);
                 successCount++;
             } catch (err) {
                 // Client disconnected, remove it
