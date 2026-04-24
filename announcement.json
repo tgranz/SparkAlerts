@@ -1,0 +1,7 @@
+{
+    "message": "This is a test announcement. You can ignore this message.",
+    "icon": "note",
+    "stopShowing": "2026-04-25T00:00:00Z",
+    "color": "#ffcc00",
+    "showNotification": true
+}

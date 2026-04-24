@@ -158,6 +158,17 @@ export default class API {
             res.json({ connections: this.sseClients.size });
         });
 
+        // Endpoint to retrieve the announcement data
+        this.app.get('/announcement', (req, res) => {
+            const announcementPath = path.join(__dirname, 'announcement.json');
+            res.sendFile(announcementPath, err => {
+                if (err) {
+                    console.error('Error sending announcement.json:', err);
+                    res.status(500).json({ error: 'Failed to load announcement.' });
+                }
+            });
+        });
+
         this.app.listen(this.port, () => {
             console.log(`API server running on http://localhost:${this.port}`);
         });
