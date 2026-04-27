@@ -148,6 +148,8 @@ function updateAlert(alertIdentity, updatedData) {
         const alerts = readAlertDatabase();
         let alertFound = false;
 
+        let updatedAlert = null;
+
         const updatedAlerts = alerts.map(alert => {
             if (_isMatchingAlert(alert, alertIdentity)) {
                 alertFound = true;
@@ -157,7 +159,7 @@ function updateAlert(alertIdentity, updatedData) {
 
                 const updatedProps = _getUpdatedProps(updatedMessage);
 
-                return { 
+                updatedAlert = {
                     id: alert.id,
                     productCode: alert.productCode,
                     productName: alert.productName,
@@ -168,7 +170,9 @@ function updateAlert(alertIdentity, updatedData) {
                     message: updatedMessage,
                     geometry: updatedData.geometry,
                     properties: updatedProps
-                 };
+                };
+
+                return updatedAlert;
             }
             return alert;
         });
@@ -178,6 +182,7 @@ function updateAlert(alertIdentity, updatedData) {
         }
 
         fs.writeFileSync('alerts.json', JSON.stringify(updatedAlerts), 'utf8');
+        return updatedAlert;
     } catch (err) {
         throw new Error('Error updating alert: ' + err.message);
     }
@@ -193,6 +198,8 @@ function cancelAlert(alertIdentity, updatedData) {
         const alerts = readAlertDatabase();
         let alertFound = false;
 
+        let updatedAlert = null;
+
         const updatedAlerts = alerts.map(alert => {
             if (_isMatchingAlert(alert, alertIdentity)) {
                 alertFound = true;
@@ -202,7 +209,7 @@ function cancelAlert(alertIdentity, updatedData) {
 
                 const updatedProps = _getUpdatedProps(updatedMessage);
 
-                return { 
+                updatedAlert = {
                     id: alert.id,
                     productCode: alert.productCode,
                     productName: alert.productName,
@@ -213,7 +220,9 @@ function cancelAlert(alertIdentity, updatedData) {
                     message: updatedMessage,
                     geometry: updatedData.geometry, // Use updated geometry
                     properties: updatedProps
-                 };
+                };
+
+                return updatedAlert;
             }
             return alert;
         });
@@ -223,6 +232,7 @@ function cancelAlert(alertIdentity, updatedData) {
         }
 
         fs.writeFileSync('alerts.json', JSON.stringify(updatedAlerts), 'utf8');
+        return updatedAlert;
     } catch (err) {
         throw new Error('Error canceling alert: ' + err.message);
     }

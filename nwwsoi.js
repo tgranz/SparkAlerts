@@ -203,8 +203,8 @@ export default class NWWSOI {
                     } else if (action === 'CAN') {
                         // Partial cancellation - update alert with cancellation message
                         try {
-                            cancelAlert(alertIdentity, alertData);
-                            callbacks.onUpdate(alertData);
+                            const cancelledAlert = cancelAlert(alertIdentity, alertData);
+                            callbacks.onUpdate(cancelledAlert);
                         } catch (err) {
                             if (err.message.includes('Alert not found')) {
                                 console.warn('Attempted to cancel alert that does not exist in database:', err.message);
@@ -220,8 +220,8 @@ export default class NWWSOI {
                         const eventTrackingNumber = parser.getProperty('vtec')?.eventTrackingNumber;
                         console.log(`Attempting to ${action} alert with eventTrackingNumber: ${eventTrackingNumber}`);
                         try {
-                            updateAlert(alertIdentity, alertData);
-                            callbacks.onUpdate(alertData);
+                            const updatedAlert = updateAlert(alertIdentity, alertData);
+                            callbacks.onUpdate(updatedAlert);
                             return;
                         } catch (err) {
                             console.warn('Failed to update alert:', err.message, '- Adding as new alert instead');
