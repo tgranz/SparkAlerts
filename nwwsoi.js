@@ -144,6 +144,17 @@ export default class NWWSOI {
 
                 const vtec = parser.getProperty('vtec');
 
+                // Dust Storm alerts are universal? Identify advisory or warning
+                if (productInfo.productName === 'Dust Storm') {
+                    if (messageText.includes('Advisory')) {
+                        productInfo.productName = 'Dust Storm Advisory';
+                        productInfo.productCode = 'DSA';
+                    } else if (messageText.includes('Warning')) {
+                        productInfo.productName = 'Dust Storm Warning';
+                        productInfo.productCode = 'DSW';
+                    }
+                }
+
                 const alertData = {
                     id: parser.getProperty('id'),
                     productCode: productInfo.productCode,
