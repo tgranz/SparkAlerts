@@ -7,10 +7,10 @@ const SETTINGS_FILE = path.resolve('usersettings/settings.json');
 // Returns null if the passphrase is invalid.
 function sanitizePassphrase(passphrase) {
     if (typeof passphrase !== 'string') return null;
-    const trimmed = passphrase.trim();
-    if (trimmed.length === 0 || trimmed.length > 128) return null;
-    if (!/^[a-zA-Z0-9_-]+$/.test(trimmed)) return null;
-    return trimmed;
+    const normalized = passphrase.trim().replace(/\s+/g, ' ');
+    if (normalized.length === 0 || normalized.length > 128) return null;
+    if (!/^[a-zA-Z0-9 _-]+$/.test(normalized)) return null;
+    return normalized;
 }
 
 function _readStore() {

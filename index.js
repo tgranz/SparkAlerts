@@ -11,7 +11,8 @@ catch (err) { console.error('Error loading config.json:', err.message); process.
 
 // Start API server
 const apiServer = new API(config?.api?.port || config?.expressPort || 3000, {
-    allowNoOrigin: config?.api?.allowNoOrigin ?? false,
+    corsEnabled: config?.api?.cors?.enabled ?? true,
+    allowNoOrigin: config?.api?.cors?.allowNoOrigin ?? false,
     domainWhitelist: Array.isArray(config?.api?.cors?.allowed_origins) ? config.api.cors.allowed_origins : []
 });
 

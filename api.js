@@ -21,6 +21,7 @@ export default class API {
     constructor(port, options = {}) {
         this.port = port;
         this.sseClients = new Set(); // Track all SSE client state objects
+        this.corsEnabled = options.corsEnabled ?? true;
         this.allowNoOrigin = options.allowNoOrigin ?? false;
         this.domainWhitelist = new Set((options.domainWhitelist || [])
             .map(normalizeOrigin)
@@ -30,25 +31,40 @@ export default class API {
         this.app.use(express.json());
         this.app.use(express.static(path.join(__dirname, 'public'))); // Serve static files
         this.app.use((req, res, next) => {
+            if (!this.corsEnabled) {
+                return next();
+            }
+
             const requestOrigin = normalizeOrigin(req.headers.origin);
             const hasWhitelist = this.domainWhitelist.size > 0;
             const originAllowed = requestOrigin && this.domainWhitelist.has(requestOrigin);
             const noOriginAllowed = !requestOrigin && this.allowNoOrigin;
 
-            if (hasWhitelist && !originAllowed && !noOriginAllowed) {
-                return res.status(403).json({ error: 'Origin not allowed.' });
+            res.setHeader('Vary', 'Origin');
+            res.setHeader('Access-Control-Allow-Methods', 'GET,POST,PUT,PATCH,DELETE,OPTIONS');
+
+            const requestedHeaders = req.headers['access-control-request-headers'];
+            if (typeof requestedHeaders === 'string' && requestedHeaders.trim()) {
+                res.setHeader('Access-Control-Allow-Headers', requestedHeaders);
+                res.setHeader('Vary', 'Origin, Access-Control-Request-Headers');
+            } else {
+                res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization');
             }
+            res.setHeader('Access-Control-Max-Age', '86400');
 
             if (requestOrigin && (!hasWhitelist || originAllowed)) {
                 res.setHeader('Access-Control-Allow-Origin', req.headers.origin);
-                res.setHeader('Vary', 'Origin');
             }
 
-            res.setHeader('Access-Control-Allow-Methods', 'GET,POST,PUT,PATCH,DELETE,OPTIONS');
-            res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization');
-
             if (req.method === 'OPTIONS') {
+                if (hasWhitelist && !originAllowed && !noOriginAllowed) {
+                    return res.status(403).json({ error: 'Origin not allowed.' });
+                }
                 return res.sendStatus(204);
+            }
+
+            if (hasWhitelist && !originAllowed && !noOriginAllowed) {
+                return res.status(403).json({ error: 'Origin not allowed.' });
             }
 
             next();
