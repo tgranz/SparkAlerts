@@ -3,6 +3,7 @@ import path from 'path';
 import { fileURLToPath } from 'url';
 import { readAlertDatabase, getProduct } from './database.js';
 import { recordSubscribe, getAnalytics } from './utils/analytics.js';
+import { loadSettings, saveSettings } from './settings-store.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
@@ -167,6 +168,42 @@ export default class API {
                     res.status(500).json({ error: 'Failed to load announcement.' });
                 }
             });
+        });
+
+        // Endpoint to load settings given a passphrase
+        this.app.get('/settings/:pass', (req, res) => {
+            const passphrase = req.params.pass;
+            if (!passphrase) {
+                return res.status(400).json({ error: 'Passphrase is required' });
+            }
+
+            const settings = loadSettings(passphrase);
+            if (!settings) {
+                return res.status(404).json({ error: 'Settings not found' });
+            }
+
+            res.json(settings);
+        });
+
+        // Endpoint to save settings given a passphrase
+        this.app.post('/settings/:pass', (req, res) => {
+            const passphrase = req.params.pass;
+            const settings = req.body;
+
+            if (!passphrase) {
+                return res.status(400).json({ error: 'Passphrase is required' });
+            }
+
+            if (!settings || typeof settings !== 'object') {
+                return res.status(400).json({ error: 'Settings must be a JSON object' });
+            }
+
+            const success = saveSettings(passphrase, settings);
+            if (!success) {
+                return res.status(400).json({ error: 'Invalid passphrase' });
+            }
+
+            res.json({ success: true });
         });
 
         this.app.listen(this.port, () => {
