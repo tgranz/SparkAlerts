@@ -172,12 +172,7 @@ export default class API {
 
         // Endpoint to load settings given a passphrase
         this.app.get('/settings/:pass', (req, res) => {
-            const passphrase = req.params.pass;
-            if (!passphrase) {
-                return res.status(400).json({ error: 'Passphrase is required' });
-            }
-
-            const settings = loadSettings(passphrase);
+            const settings = loadSettings(req.params.pass);
             if (!settings) {
                 return res.status(404).json({ error: 'Settings not found' });
             }
@@ -190,17 +185,17 @@ export default class API {
             const passphrase = req.params.pass;
             const settings = req.body;
 
-            if (!passphrase) {
-                return res.status(400).json({ error: 'Passphrase is required' });
-            }
-
-            if (!settings || typeof settings !== 'object') {
+            if (!settings || typeof settings !== 'object' || Array.isArray(settings)) {
                 return res.status(400).json({ error: 'Settings must be a JSON object' });
             }
 
-            const success = saveSettings(passphrase, settings);
-            if (!success) {
-                return res.status(400).json({ error: 'Invalid passphrase' });
+            try {
+                const success = saveSettings(passphrase, settings);
+                if (!success) {
+                    return res.status(400).json({ error: 'Invalid passphrase' });
+                }
+            } catch (err) {
+                return res.status(500).json({ error: 'Failed to save settings' });
             }
 
             res.json({ success: true });
