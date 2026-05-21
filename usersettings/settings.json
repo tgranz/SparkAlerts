@@ -1,1 +1,536 @@
-{}
+{
+  "Jedi Princess": {
+    "showToolbar": true,
+    "showProductPicker": true,
+    "showTimeAndTilt": true,
+    "enableLocation": false,
+    "alertDetailsAppearIn": "dialogs",
+    "weatherTempUnit": "F",
+    "weatherPressureUnit": "MB",
+    "weatherWindUnit": "MPH",
+    "weatherPrecipUnit": "IN",
+    "weatherDistanceUnit": "MI",
+    "reflectivityGateFilter": -10,
+    "enableVelocityDealias": true,
+    "enableSplitCursorMarker": true,
+    "enableRightClickMenu": true,
+    "vcpDisplayFormat": "descriptive",
+    "cacheMaxSlots": 24,
+    "cacheMaxSizeGB": 1,
+    "animationFrameCount": 6,
+    "animationSpeed": 0.5,
+    "primaryColor": "#27beff",
+    "secondaryColor": "#2a7fff",
+    "borderColor": "#808080",
+    "secondaryBorderColor": "#27beff",
+    "roundness": 10,
+    "mapLayerVisibility": {},
+    "mapLayerStyles": {},
+    "mapBackgroundStyle": "default",
+    "enableErrorNotifications": true,
+    "alertFlashNewlyIssued": true,
+    "alertFlashNewlyIssuedTime": 60,
+    "alertShowMotLoc": false,
+    "alertThickess": 2,
+    "shortcutToggleSplitView": "m",
+    "shortcutToggleCrossSection": "x",
+    "shortcutShowRadarStatus": "s",
+    "shortcutShowMenu": "h",
+    "shortcutShowLayerMenu": "l",
+    "shortcutDraw": "d",
+    "shortcutFinder": "f",
+    "shortcutInspector": "i",
+    "shortcutMeasure": "n",
+    "shortcutProductReflectivity": "1",
+    "shortcutProductVelocity": "2",
+    "shortcutProductCorrelationCoefficient": "3",
+    "shortcutProductHydrometeorClassification": "4",
+    "shortcutProductSpecificDifferentialPhase": "5",
+    "syncPassphrase": "Jedi Princess",
+    "alert_tornado_emergency": {
+      "enabled": true,
+      "notify": true,
+      "updnotify": true,
+      "sound": "none",
+      "updsound": "none",
+      "color": "#ae21ff"
+    },
+    "alert_pds_tornado_warning": {
+      "enabled": true,
+      "notify": true,
+      "updnotify": true,
+      "sound": "none",
+      "updsound": "none",
+      "color": "#ff00ff"
+    },
+    "alert_confirmed_tornado_warning": {
+      "enabled": true,
+      "notify": true,
+      "updnotify": true,
+      "sound": "none",
+      "updsound": "none",
+      "color": "#ca2020"
+    },
+    "alert_tornado_warning": {
+      "enabled": true,
+      "notify": true,
+      "updnotify": true,
+      "sound": "none",
+      "updsound": "none",
+      "color": "#ff2121"
+    },
+    "alert_destructive_severe_thunderstorm_warning": {
+      "enabled": true,
+      "notify": true,
+      "updnotify": true,
+      "sound": "none",
+      "updsound": "none",
+      "color": "#ff5500"
+    },
+    "alert_considerable_severe_thunderstorm_warning": {
+      "enabled": true,
+      "notify": true,
+      "updnotify": true,
+      "sound": "none",
+      "updsound": "none",
+      "color": "#ff7700"
+    },
+    "alert_severe_thunderstorm_warning": {
+      "enabled": true,
+      "notify": true,
+      "updnotify": true,
+      "sound": "none",
+      "updsound": "none",
+      "color": "#ff9900"
+    },
+    "alert_special_weather_statement": {
+      "enabled": true,
+      "notify": true,
+      "updnotify": true,
+      "sound": "none",
+      "updsound": "none",
+      "color": "#facc15"
+    },
+    "alert_flash_flood_emergency": {
+      "enabled": true,
+      "notify": true,
+      "updnotify": true,
+      "sound": "none",
+      "updsound": "none",
+      "color": "#1ed400"
+    },
+    "alert_considerable_flash_flood_warning": {
+      "enabled": true,
+      "notify": true,
+      "updnotify": true,
+      "sound": "none",
+      "updsound": "none",
+      "color": "#38f852"
+    },
+    "alert_flash_flood_warning": {
+      "enabled": true,
+      "notify": true,
+      "updnotify": true,
+      "sound": "none",
+      "updsound": "none",
+      "color": "#38f852"
+    },
+    "alert_flash_flood_watch": {
+      "enabled": true,
+      "notify": true,
+      "updnotify": true,
+      "sound": "none",
+      "updsound": "none",
+      "color": "#27bd3b"
+    },
+    "alert_flood_warning": {
+      "enabled": true,
+      "notify": true,
+      "updnotify": true,
+      "sound": "none",
+      "updsound": "none",
+      "color": "#27beff"
+    },
+    "alert_special_marine_warning": {
+      "enabled": true,
+      "notify": true,
+      "updnotify": true,
+      "sound": "none",
+      "updsound": "none",
+      "color": "#1406d4"
+    },
+    "alert_marine_weather_statement": {
+      "enabled": true,
+      "notify": true,
+      "updnotify": true,
+      "sound": "none",
+      "updsound": "none",
+      "color": "#06b6d4"
+    },
+    "alert_tsunami_warning": {
+      "enabled": true,
+      "notify": true,
+      "updnotify": true,
+      "sound": "none",
+      "updsound": "none",
+      "color": "#00b418"
+    },
+    "alert_earthquake_warning": {
+      "enabled": true,
+      "notify": true,
+      "updnotify": true,
+      "sound": "none",
+      "updsound": "none",
+      "color": "#b40000"
+    },
+    "alert_volcano_warning": {
+      "enabled": true,
+      "notify": true,
+      "updnotify": true,
+      "sound": "none",
+      "updsound": "none",
+      "color": "#ff8800"
+    },
+    "alert_avalanche_warning": {
+      "enabled": true,
+      "notify": true,
+      "updnotify": true,
+      "sound": "none",
+      "updsound": "none",
+      "color": "#d52dff"
+    },
+    "alert_avalanche_watch": {
+      "enabled": true,
+      "notify": true,
+      "updnotify": true,
+      "sound": "none",
+      "updsound": "none",
+      "color": "#b23acf"
+    },
+    "alert_snow_squall_warning": {
+      "enabled": true,
+      "notify": true,
+      "updnotify": true,
+      "sound": "none",
+      "updsound": "none",
+      "color": "#00d4ff"
+    },
+    "alert_extreme_wind_warning": {
+      "enabled": true,
+      "notify": true,
+      "updnotify": true,
+      "sound": "none",
+      "updsound": "none",
+      "color": "#ff00ff"
+    },
+    "alert_shelter_in_place_warning": {
+      "enabled": true,
+      "notify": true,
+      "updnotify": true,
+      "sound": "none",
+      "updsound": "none",
+      "color": "#f700ff"
+    },
+    "alert_dust_storm_warning": {
+      "enabled": true,
+      "notify": true,
+      "updnotify": true,
+      "sound": "none",
+      "updsound": "none",
+      "color": "#c76531"
+    },
+    "alert_tornado_watch": {
+      "enabled": true,
+      "notify": true,
+      "updnotify": true,
+      "sound": "none",
+      "updsound": "none",
+      "color": "#ff2121"
+    },
+    "alert_severe_thunderstorm_watch": {
+      "enabled": true,
+      "notify": true,
+      "updnotify": true,
+      "sound": "none",
+      "updsound": "none",
+      "color": "#ff9900"
+    },
+    "alert_mesoscale_discussion": {
+      "enabled": true,
+      "notify": true,
+      "updnotify": true,
+      "sound": "none",
+      "updsound": "none",
+      "color": "#ffcc00"
+    },
+    "theme": "test",
+    "units": "imperial"
+  },
+  "Jedi Princess Power": {
+    "showToolbar": true,
+    "showProductPicker": true,
+    "showTimeAndTilt": true,
+    "enableLocation": false,
+    "alertDetailsAppearIn": "dialogs",
+    "weatherTempUnit": "F",
+    "weatherPressureUnit": "MB",
+    "weatherWindUnit": "MPH",
+    "weatherPrecipUnit": "IN",
+    "weatherDistanceUnit": "MI",
+    "reflectivityGateFilter": -10,
+    "enableVelocityDealias": true,
+    "enableSplitCursorMarker": true,
+    "enableRightClickMenu": true,
+    "vcpDisplayFormat": "descriptive",
+    "cacheMaxSlots": 24,
+    "cacheMaxSizeGB": 1,
+    "animationFrameCount": 6,
+    "animationSpeed": 0.5,
+    "primaryColor": "#27beff",
+    "secondaryColor": "#2a7fff",
+    "borderColor": "#808080",
+    "secondaryBorderColor": "#27beff",
+    "roundness": 10,
+    "mapLayerVisibility": {},
+    "mapLayerStyles": {},
+    "mapBackgroundStyle": "default",
+    "enableErrorNotifications": false,
+    "alertFlashNewlyIssued": true,
+    "alertFlashNewlyIssuedTime": 60,
+    "alertShowMotLoc": false,
+    "alertThickess": 2,
+    "shortcutToggleSplitView": "m",
+    "shortcutToggleCrossSection": "x",
+    "shortcutShowRadarStatus": "s",
+    "shortcutShowMenu": "h",
+    "shortcutShowLayerMenu": "l",
+    "shortcutDraw": "d",
+    "shortcutFinder": "f",
+    "shortcutInspector": "i",
+    "shortcutMeasure": "n",
+    "shortcutProductReflectivity": "1",
+    "shortcutProductVelocity": "2",
+    "shortcutProductCorrelationCoefficient": "3",
+    "shortcutProductHydrometeorClassification": "4",
+    "shortcutProductSpecificDifferentialPhase": "5",
+    "syncPassphrase": "Jedi Princess Power",
+    "alert_tornado_emergency": {
+      "enabled": true,
+      "notify": true,
+      "updnotify": true,
+      "sound": "none",
+      "updsound": "none",
+      "color": "#ae21ff"
+    },
+    "alert_pds_tornado_warning": {
+      "enabled": true,
+      "notify": true,
+      "updnotify": true,
+      "sound": "none",
+      "updsound": "none",
+      "color": "#ff00ff"
+    },
+    "alert_confirmed_tornado_warning": {
+      "enabled": true,
+      "notify": true,
+      "updnotify": true,
+      "sound": "none",
+      "updsound": "none",
+      "color": "#ca2020"
+    },
+    "alert_tornado_warning": {
+      "enabled": true,
+      "notify": true,
+      "updnotify": true,
+      "sound": "none",
+      "updsound": "none",
+      "color": "#ff2121"
+    },
+    "alert_destructive_severe_thunderstorm_warning": {
+      "enabled": true,
+      "notify": true,
+      "updnotify": true,
+      "sound": "none",
+      "updsound": "none",
+      "color": "#ff5500"
+    },
+    "alert_considerable_severe_thunderstorm_warning": {
+      "enabled": true,
+      "notify": true,
+      "updnotify": true,
+      "sound": "none",
+      "updsound": "none",
+      "color": "#ff7700"
+    },
+    "alert_severe_thunderstorm_warning": {
+      "enabled": true,
+      "notify": true,
+      "updnotify": true,
+      "sound": "none",
+      "updsound": "none",
+      "color": "#ff9900"
+    },
+    "alert_special_weather_statement": {
+      "enabled": true,
+      "notify": true,
+      "updnotify": true,
+      "sound": "none",
+      "updsound": "none",
+      "color": "#facc15"
+    },
+    "alert_flash_flood_emergency": {
+      "enabled": true,
+      "notify": true,
+      "updnotify": true,
+      "sound": "none",
+      "updsound": "none",
+      "color": "#1ed400"
+    },
+    "alert_considerable_flash_flood_warning": {
+      "enabled": true,
+      "notify": true,
+      "updnotify": true,
+      "sound": "none",
+      "updsound": "none",
+      "color": "#38f852"
+    },
+    "alert_flash_flood_warning": {
+      "enabled": true,
+      "notify": true,
+      "updnotify": true,
+      "sound": "none",
+      "updsound": "none",
+      "color": "#38f852"
+    },
+    "alert_flash_flood_watch": {
+      "enabled": true,
+      "notify": true,
+      "updnotify": true,
+      "sound": "none",
+      "updsound": "none",
+      "color": "#27bd3b"
+    },
+    "alert_flood_warning": {
+      "enabled": true,
+      "notify": true,
+      "updnotify": true,
+      "sound": "none",
+      "updsound": "none",
+      "color": "#27beff"
+    },
+    "alert_special_marine_warning": {
+      "enabled": true,
+      "notify": true,
+      "updnotify": true,
+      "sound": "none",
+      "updsound": "none",
+      "color": "#1406d4"
+    },
+    "alert_marine_weather_statement": {
+      "enabled": true,
+      "notify": true,
+      "updnotify": true,
+      "sound": "none",
+      "updsound": "none",
+      "color": "#06b6d4"
+    },
+    "alert_tsunami_warning": {
+      "enabled": true,
+      "notify": true,
+      "updnotify": true,
+      "sound": "none",
+      "updsound": "none",
+      "color": "#00b418"
+    },
+    "alert_earthquake_warning": {
+      "enabled": true,
+      "notify": true,
+      "updnotify": true,
+      "sound": "none",
+      "updsound": "none",
+      "color": "#b40000"
+    },
+    "alert_volcano_warning": {
+      "enabled": true,
+      "notify": true,
+      "updnotify": true,
+      "sound": "none",
+      "updsound": "none",
+      "color": "#ff8800"
+    },
+    "alert_avalanche_warning": {
+      "enabled": true,
+      "notify": true,
+      "updnotify": true,
+      "sound": "none",
+      "updsound": "none",
+      "color": "#d52dff"
+    },
+    "alert_avalanche_watch": {
+      "enabled": true,
+      "notify": true,
+      "updnotify": true,
+      "sound": "none",
+      "updsound": "none",
+      "color": "#b23acf"
+    },
+    "alert_snow_squall_warning": {
+      "enabled": true,
+      "notify": true,
+      "updnotify": true,
+      "sound": "none",
+      "updsound": "none",
+      "color": "#00d4ff"
+    },
+    "alert_extreme_wind_warning": {
+      "enabled": true,
+      "notify": true,
+      "updnotify": true,
+      "sound": "none",
+      "updsound": "none",
+      "color": "#ff00ff"
+    },
+    "alert_shelter_in_place_warning": {
+      "enabled": true,
+      "notify": true,
+      "updnotify": true,
+      "sound": "none",
+      "updsound": "none",
+      "color": "#f700ff"
+    },
+    "alert_dust_storm_warning": {
+      "enabled": true,
+      "notify": true,
+      "updnotify": true,
+      "sound": "none",
+      "updsound": "none",
+      "color": "#c76531"
+    },
+    "alert_tornado_watch": {
+      "enabled": true,
+      "notify": true,
+      "updnotify": true,
+      "sound": "none",
+      "updsound": "none",
+      "color": "#ff2121"
+    },
+    "alert_severe_thunderstorm_watch": {
+      "enabled": true,
+      "notify": true,
+      "updnotify": true,
+      "sound": "none",
+      "updsound": "none",
+      "color": "#ff9900"
+    },
+    "alert_mesoscale_discussion": {
+      "enabled": true,
+      "notify": true,
+      "updnotify": true,
+      "sound": "none",
+      "updsound": "none",
+      "color": "#ffcc00"
+    },
+    "theme": "test",
+    "units": "imperial"
+  }
+}

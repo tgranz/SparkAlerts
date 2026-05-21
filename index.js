@@ -2,6 +2,7 @@
 import NWWSOI from "./nwwsoi.js";
 import API from "./api.js";
 import { checkAndRemoveExpiredAlerts } from './database.js';
+import { startDailySettingsCleanup } from './settings-store.js';
 
 // Import configuration from config.json file
 import fs from 'fs';
@@ -21,6 +22,9 @@ const nwwsoiClient = new NWWSOI(config?.products || {}, {
     onNew: (alert) => apiServer.triggerNewAlertEvent(alert),
     onUpdate: (alert) => apiServer.triggerUpdateAlertEvent(alert)
 });
+
+// Run once at startup, then every 24 hours.
+startDailySettingsCleanup();
 
 // Check for expired alerts every 30 seconds
 setInterval(() => {
