@@ -163,6 +163,7 @@
   "MSM": "ASOS Monthly Summary Message",
   "MTR": "METAR Formatted Surface Weather Observation",
   "MTT": "METAR Test Message",
+  "MCD": "Mesoscale Discussion",
   "MVF": "Marine Verification Coded Message",
   "MWS": "Marine Weather Statement",
   "MWW": "Marine Weather Message",

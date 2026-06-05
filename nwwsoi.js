@@ -12,6 +12,7 @@ import fs from 'fs';
 import CAPParser from './parsers/cap_parser.js';
 import WMOParser from './parsers/wmo_parser.js';
 import parseCOD from './parsers/special/cod.js';
+import parseMCD from './parsers/special/mcd.js';
 
 // Import database worker
 import { addNewAlert, deleteAlert, updateAlert, cancelAlert, storeProduct } from './database.js';
@@ -110,12 +111,49 @@ export default class NWWSOI {
                     
                     return;
                 } else if (productInfo.productCode === 'SWO') {
-                    // Severe weather outlook narrative + mesoscale discussions (testing)
-                    const parsed = String(messageText)
+                    // SWO can include mesoscale discussions (MCD) that should be tracked like alerts.
+                    const rawProduct = parser.getRawMessage() || String(messageText || '');
+                    const isMesoscaleDiscussion = /\bMesoscale Discussion\b/i.test(rawProduct);
 
-                    // Store the product
+                    if (isMesoscaleDiscussion) {
+                        const parsed = parseMCD(rawProduct, parser.getProperty('issuedAt'), nwsOffice);
+
+                        const alertData = {
+                            id: parsed.id,
+                            productCode: parsed.productCode,
+                            productName: parsed.productName,
+                            receivedAt: new Date().toISOString(),
+                            expiresAt: parsed.expiresAt,
+                            nwsOffice: nwsOffice || parsed.properties.office,
+                            vtec: null,
+                            message: rawProduct,
+                            geometry: parsed.geometry,
+                            properties: {
+                                ...parsed.properties,
+                                isPds: false,
+                                isConsiderable: false,
+                                isDestructive: false,
+                                isEmergency: false,
+                                isTorPossible: false,
+                                isTorConfirmed: false,
+                                isTorRadarIndicated: false,
+                            }
+                        };
+
+                        try {
+                            addNewAlert(alertData);
+                            callbacks.onNew(alertData);
+                            console.log('Successfully stored MCD alert in database\n');
+                        } catch (err) {
+                            console.error('Error saving MCD alert to database:', err.message);
+                        }
+
+                        return;
+                    }
+
+                    // Non-MCD SWO products are still stored as product artifacts.
                     try {
-                        storeProduct('swo', parsed);
+                        storeProduct('swo', rawProduct);
                     } catch (err) {
                         console.error('Error storing SWO product:', err.message);
                     }
